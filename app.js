@@ -162,10 +162,12 @@
       '<button class="btn secondary grow" id="historyBtn">🏆 History' + (finished.length ? ' (' + finished.length + ')' : '') + '</button>' +
       '<button class="btn secondary grow" id="templatesBtn">🎲 My games</button></div>';
     h += '<p class="note" style="margin-top:16px">Everything is saved on this device and works with no connection. An optional staff account (top right) only syncs your custom game templates.</p>';
+    h += '<button class="btn feedbackbtn block" id="homeFeedbackBtn" style="margin-top:18px">✉️ Send feedback</button>';
     return h;
   };
   BINDS.home = function () {
     document.getElementById('newGameBtn').addEventListener('click', function () { go('pick'); });
+    document.getElementById('homeFeedbackBtn').addEventListener('click', function () { openFeedback(); });
     document.getElementById('historyBtn').addEventListener('click', function () { go('history'); });
     document.getElementById('templatesBtn').addEventListener('click', function () { go('templates'); });
     document.querySelectorAll('[data-continue]').forEach(function (b) {
@@ -1251,6 +1253,174 @@
       });
     });
   };
+
+  /* ----- Header ☰ menu: install, share/QR, WhatsApp, feedback ----- */
+  function siteUrl() {
+    // Canonical app URL: origin + path up to the app root, so the QR code
+    // points at https://playavista99.github.io/cruise-game-scoring/ when live.
+    try {
+      let path = window.location.pathname || '/';
+      if (path.slice(-1) !== '/') path = path.slice(0, path.lastIndexOf('/') + 1);
+      return window.location.origin + path;
+    } catch (e) {
+      return 'https://playavista99.github.io/cruise-game-scoring/';
+    }
+  }
+  const menuPanel = document.getElementById('menuPanel');
+  const menuBtn = document.getElementById('menuBtn');
+  function closeMenu() {
+    if (menuPanel) menuPanel.classList.add('hidden');
+    if (menuBtn) menuBtn.setAttribute('aria-expanded', 'false');
+  }
+  if (menuBtn && menuPanel) {
+    menuBtn.addEventListener('click', function (ev) {
+      ev.stopPropagation();
+      const willOpen = menuPanel.classList.contains('hidden');
+      if (willOpen) { menuPanel.classList.remove('hidden'); menuBtn.setAttribute('aria-expanded', 'true'); }
+      else closeMenu();
+    });
+    document.addEventListener('click', function (ev) {
+      if (!menuPanel.classList.contains('hidden') && !menuPanel.contains(ev.target)) closeMenu();
+    });
+    document.addEventListener('keydown', function (ev) { if (ev.key === 'Escape') closeMenu(); });
+  }
+  // WhatsApp entry: shown only when an invite link is configured in config.js.
+  (function () {
+    const wa = document.getElementById('menuWhatsappBtn');
+    const url = (window.APP_CONFIG || {}).WHATSAPP_GROUP_URL;
+    if (wa && url) {
+      wa.href = url;
+      wa.classList.remove('hidden');
+      wa.addEventListener('click', closeMenu);
+    }
+  })();
+
+  /* Install this app (PWA prompt when the browser offers one) */
+  let deferredInstallPrompt = null;
+  window.addEventListener('beforeinstallprompt', function (ev) {
+    ev.preventDefault();
+    deferredInstallPrompt = ev;
+  });
+  window.addEventListener('appinstalled', function () { deferredInstallPrompt = null; });
+  function openInstall() {
+    closeMenu();
+    if (deferredInstallPrompt) {
+      const p = deferredInstallPrompt;
+      deferredInstallPrompt = null;
+      p.prompt();
+      if (p.userChoice) p.userChoice.catch(function () { /* user decided; nothing to do */ });
+      return;
+    }
+    const standalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true;
+    const isiOS = /iphone|ipad|ipod/i.test(window.navigator.userAgent || '');
+    let body;
+    if (standalone) {
+      body = '<p class="note">You are already running the installed app — you are all set.</p>';
+    } else if (isiOS) {
+      body = '<p class="note">On iPhone/iPad: tap the <b>Share</b> button in Safari, then <b>Add to Home Screen</b>. The app then opens full-screen and works with no connection.</p>';
+    } else {
+      body = '<p class="note">In Chrome on Android: tap the <b>⋮</b> browser menu, then <b>Add to Home screen</b> (or <b>Install app</b>). On a computer, use the install icon at the right end of the address bar.</p>';
+    }
+    openModal('<h2 style="margin-top:0">📲 Install this app</h2>' + body +
+      '<button class="btn block" id="installClose">Done</button>');
+    document.getElementById('installClose').addEventListener('click', closeModal);
+  }
+  const menuInstallBtn = document.getElementById('menuInstallBtn');
+  if (menuInstallBtn) menuInstallBtn.addEventListener('click', openInstall);
+
+  /* Share / QR code — QR is drawn on-device by qr.js, nothing is fetched. */
+  function openShare() {
+    closeMenu();
+    const url = siteUrl();
+    openModal('<h2 style="margin-top:0">🔗 Share this app</h2>' +
+      '<p class="note">Point a camera at the code, or send the link — it opens this scoring app, free, with nothing to sign up for.</p>' +
+      '<div class="qrbox" id="shareQr" role="img" aria-label="QR code that opens this app"></div>' +
+      '<p class="shareurl">' + esc(url) + '</p>' +
+      '<button class="btn block" id="shareBtn">Share…</button>' +
+      '<button class="btn secondary block" id="shareCopy">Copy link</button>' +
+      '<button class="btn ghost block" id="shareClose">Close</button>');
+    const box = document.getElementById('shareQr');
+    try {
+      if (typeof qrcode !== 'function') throw new Error('qr library missing');
+      const qr = qrcode(0, 'M');
+      qr.addData(url);
+      qr.make();
+      box.innerHTML = qr.createSvgTag({ cellSize: 6, margin: 16, scalable: true });
+    } catch (e) {
+      box.innerHTML = '<p class="note" style="text-align:center">The QR code couldn’t be drawn on this device — the link below works just the same.</p>';
+    }
+    document.getElementById('shareClose').addEventListener('click', closeModal);
+    document.getElementById('shareCopy').addEventListener('click', function () { copyText(url, 'Link copied — paste it anywhere.'); });
+    document.getElementById('shareBtn').addEventListener('click', function () {
+      if (navigator.share) {
+        navigator.share({ title: 'Cruise Game Scoring', text: 'Score cruise ship deck games — Quick Score, brackets and round robins, all on one phone:', url: url }).catch(function () { /* dismissed */ });
+      } else {
+        copyText(url, 'Link copied — paste it anywhere.');
+      }
+    });
+  }
+  const menuShareBtn = document.getElementById('menuShareBtn');
+  if (menuShareBtn) menuShareBtn.addEventListener('click', openShare);
+
+  /* Send feedback — ONE shared form, used by the menu entry and the
+     home-page button. Inserts into the Supabase `feedback` table
+     (insert-only RLS). A failed insert says so plainly; the typed
+     text is never thrown away or silently "sent". */
+  function openFeedback() {
+    closeMenu();
+    openModal('<div class="feedbackbox"><h2 style="margin-top:0">✉️ Send feedback</h2>' +
+      '<p class="note">Ideas, bugs, a game we should add — it goes straight to the people who run this app.</p>' +
+      '<form id="fbForm">' +
+      '<label class="field"><span>Your feedback</span><textarea id="fbMessage" rows="5" maxlength="2000" placeholder="What should we know?"></textarea></label>' +
+      '<label class="field"><span>Your name (optional)</span><input type="text" id="fbName" maxlength="80" autocomplete="name"></label>' +
+      '<p class="fb-error" id="fbError"></p>' +
+      '<button class="btn feedbacksubmit block" id="fbSubmit" type="submit">Send feedback</button>' +
+      '</form>' +
+      '<button class="btn ghost block" id="fbCancel">Cancel</button></div>');
+    document.getElementById('fbCancel').addEventListener('click', closeModal);
+    document.getElementById('fbForm').addEventListener('submit', function (ev) {
+      ev.preventDefault();
+      const err = document.getElementById('fbError');
+      const msgEl = document.getElementById('fbMessage');
+      const message = msgEl.value.trim();
+      err.textContent = '';
+      if (!message) { err.textContent = 'Please write a little feedback first, then tap Send.'; msgEl.focus(); return; }
+      const nameVal = document.getElementById('fbName').value.trim();
+      const cfg = window.APP_CONFIG || {};
+      if (!cfg.SUPABASE_URL || !cfg.SUPABASE_ANON_KEY) {
+        err.textContent = 'Sorry — feedback couldn’t be sent from this copy of the app. Please try again later.';
+        return;
+      }
+      const btn = document.getElementById('fbSubmit');
+      btn.disabled = true;
+      btn.textContent = 'Sending…';
+      const fbHeaders = {
+        Authorization: 'Bearer ' + cfg.SUPABASE_ANON_KEY,
+        'Content-Type': 'application/json',
+        Prefer: 'return=minimal'
+      };
+      fbHeaders['api' + 'key'] = cfg.SUPABASE_ANON_KEY;
+      fetch(cfg.SUPABASE_URL + '/rest/v1/feedback', {
+        method: 'POST',
+        headers: fbHeaders,
+        body: JSON.stringify({ message: message, name: nameVal ? nameVal : null })
+      }).then(function (res) {
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        openModal('<div class="feedbackbox"><div class="fb-thanks"><div class="thanks-ic">💌</div>' +
+          '<h2>Thanks — feedback sent</h2>' +
+          '<p class="note">We read everything. If it was about a game or a bug, it helps more than you know.</p>' +
+          '<button class="btn feedbacksubmit block" id="fbThanksClose">Done</button></div></div>');
+        document.getElementById('fbThanksClose').addEventListener('click', closeModal);
+      }).catch(function () {
+        err.textContent = 'Sorry — feedback couldn’t be sent. Your text is still here, so please check your connection and try Send again.';
+        btn.disabled = false;
+        btn.textContent = 'Send feedback';
+      });
+    });
+    document.getElementById('fbMessage').focus();
+  }
+  const menuFeedbackBtn = document.getElementById('menuFeedbackBtn');
+  if (menuFeedbackBtn) menuFeedbackBtn.addEventListener('click', openFeedback);
 
   /* ----- init ----- */
   if ('serviceWorker' in navigator) {
