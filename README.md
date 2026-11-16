@@ -14,6 +14,14 @@ Axe Throw, Shuffleboard, Mini Golf — every scoring rule editable at
 setup and mid-game — plus a custom game builder with export/import
 codes so a whole activity team can run identical setups.
 
+**Entry colors:** every player or team in every game gets a color
+(Red, Blue, Green, Yellow, Orange, Purple, Black, White), assigned
+automatically in sign-up order — so Bean Bag Toss starts Red vs Blue —
+and changeable by tapping the color swatch on the sign-up row. The
+color dot follows the entry through play, standings, brackets,
+results and history; in Bean Bag Toss tap-by-tap scoring each side's
+scoring block is also tinted with its color.
+
 **Data:** games, templates and history are stored in the browser's
 localStorage on the device. Nothing about players or games leaves the
 device. An optional staff account (Supabase Auth) syncs *custom
