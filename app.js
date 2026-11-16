@@ -222,12 +222,21 @@
     document.getElementById('historyBtn').addEventListener('click', function () { go('history'); });
     document.getElementById('templatesBtn').addEventListener('click', function () { go('templates'); });
     document.querySelectorAll('[data-continue]').forEach(function (b) {
-      b.addEventListener('click', function () { go('play', b.getAttribute('data-continue')); });
+      b.addEventListener('click', function () {
+        const g = getGame(b.getAttribute('data-continue'));
+        // A rounds game paused on its summary goes back to the summary,
+        // not into a half-started next round.
+        if (g && qsActive(g) && g.qsRounds.betweenRounds) go('roundSummary', g.id);
+        else go('play', b.getAttribute('data-continue'));
+      });
     });
   };
 
   function formatLabel(g) {
-    if (g.format === 'quick') return 'Quick Score';
+    if (g.format === 'quick') {
+      if (qsActive(g)) return 'Quick Score · Rounds (' + (g.qsRounds.mode === 'advance' ? 'Advance' : 'Cumulative') + ')';
+      return 'Quick Score';
+    }
     if (g.format === 'bracket') return (g.elim === 'double' ? 'Double-elim bracket' : 'Single-elim bracket');
     return 'Round Robin' + (g.rrPairing === 'results' ? ' · Results-based' : ' · Pre-set');
   }
@@ -258,6 +267,7 @@
       def: { attempts: t.attempts, buttons: clone(t.buttons), winDir: t.winDir },
       format: 'quick', entryKind: 'individuals', scoreMode: 'tap',
       elim: 'single', rrGames: '2', rrPairing: 'preset', playoffSize: '0', playoffElim: 'single',
+      qsRoundsOn: 'off', qsMode: 'cumulative', qsPlanned: [''], qsPlannedParsed: null,
       entries: []
     };
     go('setup');
@@ -415,6 +425,53 @@
       });
     });
   }
+  /* Quick Score rounds: planned-target editor rows (plain DOM inputs,
+     read on demand — the same pattern as the scoring-definition editor). */
+  function qsTargetsHTML() {
+    let rows = '';
+    draft.qsPlanned.forEach(function (v, i) {
+      rows += '<div class="btnrow-editor"><span class="tgtlbl">Round ' + (i + 1) + '</span>' +
+        '<input type="text" class="pts" id="qs-tgt-' + i + '" value="' + esc(v) + '" inputmode="numeric" placeholder="Target pts" aria-label="Round ' + (i + 1) + ' target">' +
+        (draft.qsPlanned.length > 1
+          ? '<button class="iconbtn" data-deltgt="' + i + '" aria-label="Remove planned round">✕</button>'
+          : '<span class="tgtspacer"></span>') + '</div>';
+    });
+    return rows;
+  }
+  function readQsStrings() {
+    const inputs = document.querySelectorAll('#qsTgtRows input');
+    if (!inputs.length) return draft.qsPlanned.slice();
+    const out = [];
+    inputs.forEach(function (inp) { out.push(inp.value); });
+    return out;
+  }
+  function bindQsTargets() {
+    const wrap = document.getElementById('qsTgtRows');
+    if (!wrap) return;
+    const rerender = function () {
+      wrap.innerHTML = qsTargetsHTML();
+      bindQsTargets();
+    };
+    wrap.querySelectorAll('[data-deltgt]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        draft.qsPlanned = readQsStrings();
+        draft.qsPlanned.splice(parseInt(b.getAttribute('data-deltgt'), 10), 1);
+        if (!draft.qsPlanned.length) draft.qsPlanned = [''];
+        rerender();
+      });
+    });
+    const add = document.getElementById('qsAddTgt');
+    if (add && !add.dataset.bound) {
+      add.dataset.bound = '1';
+      add.addEventListener('click', function () {
+        draft.qsPlanned = readQsStrings();
+        draft.qsPlanned.push('');
+        rerender();
+        const inputs = wrap.querySelectorAll('input');
+        if (inputs.length) inputs[inputs.length - 1].focus();
+      });
+    }
+  }
   SCREENS.setup = function () {
     const t = getTemplate(draft.templateId);
     let h = '<h1>Set up: ' + esc(t.name) + '</h1>' +
@@ -427,6 +484,19 @@
         { v: 'individuals', label: 'Individuals' }, { v: 'teams', label: 'Teams' }], draft.entryKind) +
       '<h2>Score entry</h2>' + segHTML('segMode', [
         { v: 'tap', label: 'Tap-by-tap (app adds up)' }, { v: 'total', label: 'Type final total' }], draft.scoreMode) +
+      '<div id="quickOpts" class="' + (draft.format === 'quick' ? '' : 'hidden') + '">' +
+      '<h2>Rounds</h2>' + segHTML('segQsRounds', [
+        { v: 'off', label: 'Off — one leaderboard' }, { v: 'on', label: 'On — play in rounds' }], draft.qsRoundsOn) +
+      '<div id="qsOpts" class="' + (draft.qsRoundsOn === 'on' ? '' : 'hidden') + '">' +
+      '<h2>How rounds score</h2>' + segHTML('segQsMode', [
+        { v: 'cumulative', label: 'Cumulative (scores add up)' }, { v: 'advance', label: 'Advance (hit the target to stay in)' }], draft.qsMode) +
+      '<div class="field"><span>Planned round targets</span>' +
+      '<div id="qsTgtRows">' + qsTargetsHTML() + '</div>' +
+      '<button class="btn secondary small" id="qsAddTgt" type="button">+ Add planned round</button>' +
+      '<p class="note">Targets are where a round’s bar sits — on Cornhole, round 1 might need 5 points, round 2 a new amount to stay in. ' +
+      'You do <b>not</b> have to plan them all now: after each round the summary screen lets you set or change the next round’s target before it starts. ' +
+      'Advance mode needs a Round 1 target; in Cumulative mode targets are just optional pace markers.</p></div>' +
+      '</div></div>' +
       '<div id="bracketOpts" class="' + (draft.format === 'bracket' ? '' : 'hidden') + '">' +
       '<h2>Elimination</h2>' + segHTML('segElim', [
         { v: 'single', label: 'Single elimination' }, { v: 'double', label: 'Double elimination' }], draft.elim) + '</div>' +
@@ -455,9 +525,16 @@
       draft.format = v;
       document.getElementById('bracketOpts').classList.toggle('hidden', v !== 'bracket');
       document.getElementById('rrOpts').classList.toggle('hidden', v !== 'rr');
+      document.getElementById('quickOpts').classList.toggle('hidden', v !== 'quick');
     });
     bindSeg('segKind', null, function (v) { draft.entryKind = v; });
     bindSeg('segMode', null, function (v) { draft.scoreMode = v; });
+    bindSeg('segQsRounds', null, function (v) {
+      draft.qsRoundsOn = v;
+      document.getElementById('qsOpts').classList.toggle('hidden', v !== 'on');
+    });
+    bindSeg('segQsMode', null, function (v) { draft.qsMode = v; });
+    bindQsTargets();
     bindSeg('segElim', null, function (v) { draft.elim = v; });
     bindSeg('segPairing', null, function (v) { draft.rrPairing = v; });
     bindSeg('segPlayoff', null, function (v) {
@@ -470,6 +547,23 @@
       draft.def = readDefEditor('su');
       const rrInput = document.getElementById('rrGames');
       if (rrInput) draft.rrGames = rrInput.value;
+      if (draft.format === 'quick' && draft.qsRoundsOn === 'on') {
+        draft.qsPlanned = readQsStrings();
+        const parsed = draft.qsPlanned.map(function (s) {
+          const t = String(s).trim();
+          if (t === '') return null;
+          const n = parseNum(t, -1);
+          return n < 0 ? null : n;
+        });
+        while (parsed.length && parsed[parsed.length - 1] === null) parsed.pop();
+        draft.qsPlannedParsed = parsed;
+        if (draft.qsMode === 'advance' && (parsed.length === 0 || parsed[0] === null)) {
+          alert('Advance mode needs a Round 1 target — enter one in the Planned round targets, or switch rounds to Cumulative.');
+          return;
+        }
+      } else {
+        draft.qsPlannedParsed = null;
+      }
       go('signup');
     });
   };
@@ -592,6 +686,16 @@
       e.taps = []; e.total = null;
       if (!colorByName(e.color || '')) e.color = paletteAt(i).name;
     });
+    if (draft.format === 'quick' && draft.qsRoundsOn === 'on') {
+      game.qsRounds = {
+        mode: draft.qsMode,                       // 'cumulative' | 'advance'
+        planned: (draft.qsPlannedParsed || []).slice(), // target per round (index = round-1), null = none set
+        current: 1,                               // round being scored (1-based)
+        rounds: [],                               // finished rounds: {target, scores:{entryId:score|null}, advancedByFallback}
+        outRound: {},                             // advance mode: entryId -> round it went out
+        betweenRounds: false                      // true while the round-summary screen is the live one
+      };
+    }
     if (draft.format === 'bracket') {
       game.matches = draft.elim === 'double'
         ? E.buildDoubleElim(game.entries.map(function (e) { return e.id; }))
@@ -640,6 +744,182 @@
       return game.def.winDir === 'low' ? va - vb : vb - va;
     });
     return arr;
+  }
+  /* ----- Quick Score rounds -----
+     State lives on game.qsRounds (absent = classic single leaderboard,
+     so every pre-rounds save loads unchanged):
+       mode:     'cumulative' (scores add up) | 'advance' (hit target to stay in)
+       planned:  [target|null, ...] per round, index = round-1; grows as
+                 staff add rounds from the summary screen
+       current:  1-based round being scored
+       rounds:   finished rounds [{target, scores:{entryId:score|null},
+                 advancedByFallback}]
+       outRound: advance mode — entryId -> round number it went out
+     While a round is being scored, its scores live in the usual places
+     (e.taps / e.total), so all existing scoring code works untouched;
+     End round snapshots them into rounds[] and resets for the next one. */
+  function qsActive(game) {
+    return !!game && game.format === 'quick' && !!game.qsRounds && !!game.qsRounds.mode;
+  }
+  // Rank comparison honoring win direction; an unscored (null) score is
+  // always worse than any real score. Negative = a ranks ahead of b.
+  function rankCmp(game, a, b) {
+    const an = a === null || a === undefined, bn = b === null || b === undefined;
+    if (an && bn) return 0;
+    const va = an ? (game.def.winDir === 'low' ? Infinity : -Infinity) : a;
+    const vb = bn ? (game.def.winDir === 'low' ? Infinity : -Infinity) : b;
+    return game.def.winDir === 'low' ? va - vb : vb - va;
+  }
+  function qsCurrentTarget(game) {
+    const p = game.qsRounds.planned[game.qsRounds.current - 1];
+    return p === undefined ? null : p;
+  }
+  function qsRoundsTotal(game, id) {
+    return game.qsRounds.rounds.reduce(function (sum, r) {
+      const s = r.scores[id];
+      return sum + (s === null || s === undefined ? 0 : s);
+    }, 0);
+  }
+  function qsRunningTotal(game, e) {
+    const sc = quickScore(game, e);
+    return qsRoundsTotal(game, e.id) + (sc === null ? 0 : sc);
+  }
+  function qsIsOut(game, e) {
+    return qsActive(game) && game.qsRounds.mode === 'advance' && !!game.qsRounds.outRound[e.id];
+  }
+  function qsReached(game, score, target) {
+    if (score === null || score === undefined || target === null || target === undefined) return false;
+    return game.def.winDir === 'low' ? score <= target : score >= target;
+  }
+  // Play-screen order: classic games keep quickSorted exactly. Cumulative
+  // sorts by running total; Advance puts entries still in first (by this
+  // round's score), then out entries (latest exit first).
+  function quickPlaySorted(game) {
+    if (!qsActive(game)) return quickSorted(game);
+    const qs = game.qsRounds;
+    if (qs.mode === 'cumulative') {
+      return game.entries.slice().sort(function (a, b) {
+        return rankCmp(game, qsRunningTotal(game, b), qsRunningTotal(game, a)) ||
+          rankCmp(game, quickScore(game, b), quickScore(game, a));
+      });
+    }
+    const inn = game.entries.filter(function (e) { return !qs.outRound[e.id]; });
+    const out = game.entries.filter(function (e) { return !!qs.outRound[e.id]; });
+    inn.sort(function (a, b) { return rankCmp(game, quickScore(game, b), quickScore(game, a)); });
+    out.sort(function (a, b) {
+      if (qs.outRound[b.id] !== qs.outRound[a.id]) return qs.outRound[b.id] - qs.outRound[a.id];
+      const ra = qs.rounds[qs.outRound[a.id] - 1], rb = qs.rounds[qs.outRound[b.id] - 1];
+      return rankCmp(game, rb ? rb.scores[b.id] : null, ra ? ra.scores[a.id] : null);
+    });
+    return inn.concat(out);
+  }
+  // Winner ids once the game is finished (game.qsRounds.rounds is final
+  // by then — finishGame snapshots an in-progress round first).
+  function qsWinnerIds(game) {
+    const qs = game.qsRounds;
+    const recs = qs.rounds;
+    if (!recs.length) return [];
+    let best = null, winners = [];
+    const consider = function (id, score) {
+      if (!winners.length || rankCmp(game, score, best) < 0) { best = score; winners = [id]; }
+      else if (rankCmp(game, score, best) === 0) winners.push(id);
+    };
+    if (qs.mode === 'cumulative') {
+      game.entries.forEach(function (e) { consider(e.id, qsRoundsTotal(game, e.id)); });
+    } else {
+      const last = recs[recs.length - 1];
+      game.entries.forEach(function (e) {
+        if (!qs.outRound[e.id]) consider(e.id, last.scores[e.id]);
+      });
+    }
+    return winners;
+  }
+  function qsFinalStandings(game) {
+    const qs = game.qsRounds;
+    const recs = qs.rounds;
+    const row = function (e, line) {
+      return { id: e.id, name: e.name, cabin: e.cabin, color: entryColor(game.entries, e).name, line: line };
+    };
+    if (qs.mode === 'cumulative') {
+      return game.entries.slice()
+        .sort(function (a, b) { return rankCmp(game, qsRoundsTotal(game, b.id), qsRoundsTotal(game, a.id)); })
+        .map(function (e) { return row(e, qsRoundsTotal(game, e.id) + ' pts'); });
+    }
+    const last = recs[recs.length - 1];
+    const inn = game.entries.filter(function (e) { return !qs.outRound[e.id]; });
+    const out = game.entries.filter(function (e) { return !!qs.outRound[e.id]; });
+    inn.sort(function (a, b) { return rankCmp(game, last.scores[b.id], last.scores[a.id]); });
+    out.sort(function (a, b) {
+      if (qs.outRound[b.id] !== qs.outRound[a.id]) return qs.outRound[b.id] - qs.outRound[a.id];
+      const ra = qs.rounds[qs.outRound[a.id] - 1], rb = qs.rounds[qs.outRound[b.id] - 1];
+      return rankCmp(game, rb ? rb.scores[b.id] : null, ra ? ra.scores[a.id] : null);
+    });
+    const rows = [];
+    inn.forEach(function (e) {
+      const s = last.scores[e.id];
+      rows.push(row(e, s === null || s === undefined ? '—' : s + ' pts'));
+    });
+    out.forEach(function (e) { rows.push(row(e, 'Out R' + qs.outRound[e.id])); });
+    return rows;
+  }
+  // End the current round: snapshot scores, apply Advance elimination,
+  // reset per-round scoring, and land on the round summary.
+  function endRound(game) {
+    const qs = game.qsRounds;
+    const rnum = qs.current;
+    const target = qsCurrentTarget(game);
+    const rec = { target: target, scores: {}, advancedByFallback: false };
+    game.entries.forEach(function (e) { rec.scores[e.id] = quickScore(game, e); });
+    if (qs.mode === 'advance' && target !== null && target !== undefined) {
+      const inn = game.entries.filter(function (e) { return !qs.outRound[e.id]; });
+      const reached = inn.filter(function (e) { return qsReached(game, rec.scores[e.id], target); });
+      if (inn.length && !reached.length) {
+        // Nobody hit the target: the round's top scorer(s) advance
+        // instead, so the game can never dead-end.
+        rec.advancedByFallback = true;
+        let best = null, haveBest = false;
+        inn.forEach(function (e) {
+          if (!haveBest || rankCmp(game, rec.scores[e.id], best) < 0) { best = rec.scores[e.id]; haveBest = true; }
+        });
+        inn.forEach(function (e) { if (rankCmp(game, rec.scores[e.id], best) !== 0) qs.outRound[e.id] = rnum; });
+      } else {
+        inn.forEach(function (e) { if (!qsReached(game, rec.scores[e.id], target)) qs.outRound[e.id] = rnum; });
+      }
+    }
+    qs.rounds.push(rec);
+    qs.betweenRounds = true;
+    game.entries.forEach(function (e) { e.taps = []; e.total = null; });
+    save();
+    go('roundSummary', game.id);
+  }
+  // Finish from either the play screen or the round summary. For a
+  // rounds game finished mid-round, the in-progress round is snapshotted
+  // as the final round (no elimination applied — the game is over).
+  function finishGame(game) {
+    let winnerIds = [];
+    if (game.format === 'quick') {
+      if (qsActive(game)) {
+        const qs = game.qsRounds;
+        if (!qs.betweenRounds) {
+          const scores = {};
+          game.entries.forEach(function (e) { scores[e.id] = quickScore(game, e); });
+          qs.rounds.push({ target: qsCurrentTarget(game), scores: scores, advancedByFallback: false, final: true });
+        }
+        winnerIds = qsWinnerIds(game);
+      } else {
+        const s = quickSorted(game);
+        winnerIds = s.length ? [s[0].id] : [];
+      }
+    } else {
+      const c = currentChampion(game);
+      winnerIds = c ? [c] : [];
+    }
+    game.winnerIds = winnerIds;
+    game.winnerId = winnerIds.length ? winnerIds[0] : null;
+    game.status = 'finished';
+    game.finishedAt = Date.now();
+    save();
+    go('finish', game.id);
   }
   function rrDone(game) {
     const allScored = game.matches.every(function (m) { return m.scored; });
@@ -696,44 +976,61 @@
       save(); go('home');
     });
     const fb = document.getElementById('finishBtn');
-    if (fb) fb.addEventListener('click', function () {
-      let winner = null;
-      if (game.format === 'quick') { const s = quickSorted(game); winner = s.length ? s[0].id : null; }
-      else winner = currentChampion(game);
-      game.status = 'finished';
-      game.winnerId = winner;
-      game.finishedAt = Date.now();
-      save(); go('finish', game.id);
-    });
+    if (fb) fb.addEventListener('click', function () { finishGame(game); });
     if (game.format === 'quick') bindQuick(game);
     else if (game.format === 'bracket') bindMatchCards(game, game.matches, 'brk');
     else bindRR(game);
   };
 
   /* ----- Quick Score play ----- */
+  function qsBannerHTML(game) {
+    const qs = game.qsRounds;
+    const target = qsCurrentTarget(game);
+    let txt = 'Round ' + qs.current;
+    if (qs.planned.length > 1 && qs.current <= qs.planned.length) txt += ' of ' + qs.planned.length + ' planned';
+    if (target !== null && target !== undefined) {
+      txt += ' · ' + (qs.mode === 'advance' ? 'Target' : 'Pace target') + ': ' + target + ' pts';
+    }
+    const sub = qs.mode === 'advance'
+      ? 'Advance — reach the target to stay in'
+      : 'Cumulative — round scores add up';
+    return '<div class="roundbanner"><div class="roundbanner-main">' + esc(txt) + '</div>' +
+      '<div class="roundbanner-sub">' + esc(sub) + '</div></div>';
+  }
   function quickPlayHTML(game) {
-    const sorted = quickSorted(game);
-    let h = '<h2>Leaderboard</h2>';
+    const rounds = qsActive(game);
+    const sorted = quickPlaySorted(game);
+    let h = '';
+    if (rounds) h += qsBannerHTML(game);
+    h += '<h2>Leaderboard</h2>';
     sorted.forEach(function (e, i) {
       const sc = quickScore(game, e);
       const ec = entryColor(game.entries, e);
-      const tint = (game.templateId === 'builtin-beanbag' && game.scoreMode === 'tap')
+      const out = qsIsOut(game, e);
+      const cumulative = rounds && game.qsRounds.mode === 'cumulative';
+      const bigScore = cumulative ? qsRunningTotal(game, e) : sc;
+      const tint = (!out && game.templateId === 'builtin-beanbag' && game.scoreMode === 'tap')
         ? ';border-left:7px solid ' + ec.hex : '';
-      h += '<div class="card" style="margin:8px 0;padding:12px' + tint + '"><div class="row spread">' +
+      h += '<div class="card' + (out ? ' outcard' : '') + '" style="margin:8px 0;padding:12px' + tint + '"><div class="row spread">' +
         '<div class="grow">' + colorDotHTML(ec) + '<span class="gamename" style="font-size:17px">' + (i + 1) + '. ' + esc(e.name) + '</span>' +
-        (e.cabin ? '<span class="tag">Cabin ' + esc(e.cabin) + '</span>' : '') + '</div>' +
-        '<div class="score" style="font-size:20px;font-weight:800">' + (sc === null ? '—' : sc) + '</div></div>';
-      if (game.scoreMode === 'tap') {
+        (e.cabin ? '<span class="tag">Cabin ' + esc(e.cabin) + '</span>' : '') +
+        (out ? '<span class="tag outtag">Out · Round ' + game.qsRounds.outRound[e.id] + '</span>' : '') + '</div>' +
+        '<div class="score" style="font-size:20px;font-weight:800">' + (out || bigScore === null ? '—' : bigScore) + '</div></div>';
+      if (out) {
+        h += '<div class="sub" style="margin-top:4px">Out in round ' + game.qsRounds.outRound[e.id] + ' — no longer scoring.</div>';
+      } else if (game.scoreMode === 'tap') {
         const taps = e.taps || [];
         h += '<div class="sub" style="margin-top:4px">' + taps.length + '/' + game.def.attempts + ' attempts' +
-          (taps.length ? ' · ' + taps.map(function (ti) { return esc(game.def.buttons[ti] ? game.def.buttons[ti].label : '?'); }).join(', ') : '') + '</div>' +
+          (taps.length ? ' · ' + taps.map(function (ti) { return esc(game.def.buttons[ti] ? game.def.buttons[ti].label : '?'); }).join(', ') : '') +
+          (cumulative ? ' · This round: ' + sc + ' · Total: ' + bigScore : '') + '</div>' +
           '<div class="taprow">' + game.def.buttons.map(function (b, bi) {
             return '<button class="tapbtn" data-tap="' + e.id + ':' + bi + '"' + (taps.length >= game.def.attempts ? ' disabled' : '') + '>' + esc(b.label) + '<small>' + b.points + ' pts</small></button>';
           }).join('') + '</div>' +
           (taps.length ? '<button class="btn small secondary" data-undo="' + e.id + '" style="margin-top:8px">↩ Undo last tap</button>' : '');
       } else {
-        h += '<div class="entryrow" style="margin-top:8px"><input type="text" inputmode="numeric" placeholder="Final total" value="' +
-          (e.total === null ? '' : e.total) + '" data-total="' + e.id + '"><span class="sub">tap outside the box to save</span></div>';
+        h += '<div class="entryrow" style="margin-top:8px"><input type="text" inputmode="numeric" placeholder="' + (rounds ? 'Round total' : 'Final total') + '" value="' +
+          (e.total === null ? '' : e.total) + '" data-total="' + e.id + '"><span class="sub">' +
+          (cumulative ? 'Running total: ' + bigScore + ' · ' : '') + 'tap outside the box to save</span></div>';
       }
       h += '</div>';
     });
@@ -741,9 +1038,16 @@
       '<input type="text" class="nm" id="walkName" placeholder="Name" autocomplete="off">' +
       '<input type="text" class="cb" id="walkCabin" placeholder="Cabin" inputmode="numeric">' +
       '<button class="iconbtn" id="walkAdd" aria-label="Add">＋</button></div>';
+    if (rounds) {
+      h += '<button class="btn block" id="endRoundBtn" style="margin-top:16px">End round ' + game.qsRounds.current + ' → round summary</button>' +
+        '<p class="note" style="text-align:center">Ending the round locks in this round’s scores' +
+        (game.qsRounds.mode === 'advance' ? ' and settles who advances' : '') + '.</p>';
+    }
     return h;
   }
   function bindQuick(game) {
+    const er = document.getElementById('endRoundBtn');
+    if (er) er.addEventListener('click', function () { endRound(game); });
     document.querySelectorAll('[data-tap]').forEach(function (b) {
       b.addEventListener('click', function () {
         const parts = b.getAttribute('data-tap').split(':');
@@ -770,6 +1074,95 @@
       save(); render();
     });
   }
+
+  /* ----- Quick Score round summary -----
+     Shown when a round ends. Staff see who advanced / the running
+     totals, set or edit the NEXT round's target here (this is the
+     "after the round" half of Jeff's ask — targets can be planned at
+     setup AND set here), then start the next round or finish. */
+  SCREENS.roundSummary = function (gameId) {
+    const game = getGame(gameId);
+    if (!game || !qsActive(game) || !game.qsRounds.rounds.length) return '<p class="empty">Game not found.</p>';
+    const qs = game.qsRounds;
+    const rec = qs.rounds[qs.rounds.length - 1];
+    const rnum = qs.rounds.length;
+    let h = '<div class="card row"><div>' + badge(game) + '</div><div class="grow">' +
+      '<div class="gamename">' + esc(game.name) + '</div><div class="sub">' + esc(formatLabel(game)) + '</div></div></div>';
+    h += '<h1>Round ' + rnum + ' summary</h1>';
+    if (rec.target !== null && rec.target !== undefined) {
+      h += '<p class="note">' + (qs.mode === 'advance' ? 'Target to stay in' : 'Pace target') + ': <b>' + rec.target + ' pts</b></p>';
+    }
+    if (rec.advancedByFallback) {
+      h += '<div class="card" style="border-left:7px solid #e09e00"><b>Nobody reached the target</b> — so the round’s top scorer(s) advance instead and the game goes on.</div>';
+    }
+    // Rows: Advance — advancers first (by round score), then the outs.
+    // Cumulative — by running total.
+    let rows;
+    if (qs.mode === 'advance') {
+      const stillIn = game.entries.filter(function (e) { return !qs.outRound[e.id]; });
+      const outNow = game.entries.filter(function (e) { return qs.outRound[e.id] === rnum; });
+      const outBefore = game.entries.filter(function (e) { return qs.outRound[e.id] && qs.outRound[e.id] !== rnum; });
+      const byScore = function (a, b) { return rankCmp(game, rec.scores[b.id], rec.scores[a.id]); };
+      stillIn.sort(byScore); outNow.sort(byScore);
+      rows = stillIn.map(function (e) { return { e: e, status: 'advanced' }; })
+        .concat(outNow.map(function (e) { return { e: e, status: 'out' }; }))
+        .concat(outBefore.map(function (e) { return { e: e, status: 'outbefore' }; }));
+    } else {
+      rows = game.entries.slice()
+        .sort(function (a, b) { return rankCmp(game, qsRoundsTotal(game, b.id), qsRoundsTotal(game, a.id)); })
+        .map(function (e) { return { e: e, status: 'total' }; });
+    }
+    h += '<div class="card" style="padding:8px 12px"><table class="stand"><tr><th>' +
+      (game.entryKind === 'teams' ? 'Team' : 'Player') + '</th><th class="num">Round ' + rnum + '</th>' +
+      (qs.mode === 'cumulative' ? '<th class="num">Total</th>' : '<th>Status</th>') + '</tr>';
+    rows.forEach(function (r) {
+      const s = rec.scores[r.e.id];
+      h += '<tr><td>' + entryDotHTML(game, r.e.id) + esc(r.e.name) +
+        (r.e.cabin ? ' <span class="sub">(cabin ' + esc(r.e.cabin) + ')</span>' : '') + '</td>' +
+        '<td class="num">' + (s === null || s === undefined ? '—' : s) + '</td>';
+      if (qs.mode === 'cumulative') h += '<td class="num"><b>' + qsRoundsTotal(game, r.e.id) + '</b></td>';
+      else if (r.status === 'advanced') h += '<td><span class="tag win">✓ Advanced</span></td>';
+      else if (r.status === 'out') h += '<td><span class="tag outtag">Out</span></td>';
+      else h += '<td><span class="sub">Out R' + qs.outRound[r.e.id] + '</span></td>';
+      h += '</tr>';
+    });
+    h += '</table></div>';
+    if (qs.mode === 'advance') {
+      const stillIn = game.entries.filter(function (e) { return !qs.outRound[e.id]; });
+      if (stillIn.length === 1) {
+        h += '<div class="card"><b>Only ' + esc(stillIn[0].name) + ' is still in.</b> ' +
+          '<span class="sub">Finish now to crown them — or start another round anyway.</span></div>';
+      }
+    }
+    const nextTarget = qs.planned[rnum];
+    h += '<h2>Next round</h2>' +
+      '<label class="field"><span>Round ' + (rnum + 1) + ' target' + (qs.mode === 'cumulative' ? ' (optional pace marker)' : '') + '</span>' +
+      '<input type="text" id="nextTarget" inputmode="numeric" placeholder="Target pts" value="' +
+      (nextTarget === null || nextTarget === undefined ? '' : nextTarget) + '"></label>' +
+      '<button class="btn block" id="startNextBtn">Start round ' + (rnum + 1) + '</button>' +
+      '<button class="btn secondary block" id="summaryFinishBtn">Finish game</button>' +
+      '<button class="btn ghost block" id="summaryHomeBtn">Save & back to home</button>';
+    return h;
+  };
+  BINDS.roundSummary = function (gameId) {
+    const game = getGame(gameId);
+    if (!game || !qsActive(game)) return;
+    const qs = game.qsRounds;
+    const rnum = qs.rounds.length;
+    document.getElementById('startNextBtn').addEventListener('click', function () {
+      const raw = document.getElementById('nextTarget').value.trim();
+      let target = null;
+      if (raw !== '') { const n = parseNum(raw, -1); target = n < 0 ? null : n; }
+      while (qs.planned.length < rnum) qs.planned.push(null);
+      qs.planned[rnum] = target;
+      qs.current = rnum + 1;
+      qs.betweenRounds = false;
+      save();
+      go('play', game.id);
+    });
+    document.getElementById('summaryFinishBtn').addEventListener('click', function () { finishGame(game); });
+    document.getElementById('summaryHomeBtn').addEventListener('click', function () { go('home'); });
+  };
 
   /* ----- Match cards + inline scorer (bracket & round robin) ----- */
   function matchLabel(game, matches, m) {
@@ -1064,6 +1457,7 @@
   function finalStandings(game) {
     // Returns [{id, name, cabin, color, line}] in finishing order, best first.
     if (game.format === 'quick') {
+      if (qsActive(game) && game.qsRounds.rounds.length) return qsFinalStandings(game);
       return quickSorted(game).map(function (e) {
         const sc = quickScore(game, e);
         return { id: e.id, name: e.name, cabin: e.cabin, color: entryColor(game.entries, e).name, line: (sc === null ? '—' : sc + ' pts') };
@@ -1088,7 +1482,14 @@
     const winner = game.winnerId ? entryName(game, game.winnerId) : (rows.length ? rows[0].name : '—');
     const winnerColor = game.winnerId ? (entryColorById(game, game.winnerId) || {}).name : (rows.length ? rows[0].color : '');
     const winnerTxt = winner + (winnerColor ? ' (' + winnerColor + ')' : '');
-    let txt = game.name + ' — ' + formatLabel(game) + '\n' + fmtDate(game.finishedAt || game.createdAt) + '\n🏆 Winner: ' + winnerTxt + '\n';
+    const wIds = (game.winnerIds && game.winnerIds.length) ? game.winnerIds : (game.winnerId ? [game.winnerId] : []);
+    const winnerLine = wIds.length > 1
+      ? '🏆 Winners: ' + wIds.map(function (id) {
+          const c = (entryColorById(game, id) || {}).name;
+          return entryName(game, id) + (c ? ' (' + c + ')' : '');
+        }).join(', ')
+      : '🏆 Winner: ' + winnerTxt;
+    let txt = game.name + ' — ' + formatLabel(game) + '\n' + fmtDate(game.finishedAt || game.createdAt) + '\n' + winnerLine + '\n';
     if (game.format === 'rr' && game.playoffMatches && game.winnerId) txt += 'Playoff champion: ' + winnerTxt + '\n';
     txt += '\nResults:\n';
     rows.forEach(function (r, i) { txt += (i + 1) + '. ' + r.name + (r.color ? ' (' + r.color + ')' : '') + (r.cabin ? ' (cabin ' + r.cabin + ')' : '') + (r.line ? ' — ' + r.line : '') + '\n'; });
@@ -1151,21 +1552,64 @@
     });
   }
 
+  // Per-round breakdown for a finished rounds game: one column per
+  // round, plus the running Total (Cumulative) or the Result — final
+  // round score, or where the entry went out (Advance).
+  function qsBreakdownHTML(game) {
+    const qs = game.qsRounds;
+    const recs = qs.rounds;
+    if (!recs.length) return '';
+    const rows = finalStandings(game);
+    let h = '<h2>Round by round</h2><div class="card" style="padding:8px 12px"><table class="stand"><tr><th>' +
+      (game.entryKind === 'teams' ? 'Team' : 'Player') + '</th>';
+    recs.forEach(function (r, i) { h += '<th class="num">R' + (i + 1) + '</th>'; });
+    h += '<th class="num">' + (qs.mode === 'cumulative' ? 'Total' : 'Result') + '</th></tr>';
+    const last = recs[recs.length - 1];
+    rows.forEach(function (row) {
+      h += '<tr><td>' + colorDotHTML(row.color ? colorByName(row.color) : null) + esc(row.name) + '</td>';
+      recs.forEach(function (rec) {
+        const s = rec.scores[row.id];
+        h += '<td class="num">' + (s === null || s === undefined ? '—' : s) + '</td>';
+      });
+      if (qs.mode === 'cumulative') {
+        h += '<td class="num"><b>' + qsRoundsTotal(game, row.id) + '</b></td>';
+      } else if (qs.outRound[row.id]) {
+        h += '<td class="num">Out R' + qs.outRound[row.id] + '</td>';
+      } else {
+        const s = last.scores[row.id];
+        h += '<td class="num">' + (s === null || s === undefined ? '—' : s + ' pts') + '</td>';
+      }
+      h += '</tr>';
+    });
+    h += '</table>';
+    const targets = recs.map(function (r, i) {
+      return (r.target === null || r.target === undefined) ? null : 'R' + (i + 1) + ' target ' + r.target;
+    }).filter(Boolean);
+    if (targets.length) h += '<p class="note" style="margin:8px 2px 2px">' + esc(targets.join(' · ')) + '</p>';
+    h += '</div>';
+    return h;
+  }
+
   SCREENS.finish = function (gameId) {
     const game = getGame(gameId);
     if (!game) return '<p class="empty">Game not found.</p>';
     const rows = finalStandings(game);
     const winner = game.winnerId ? entryName(game, game.winnerId) : (rows.length ? rows[0].name : '—');
     const winnerId = game.winnerId || (rows.length ? rows[0].id : null);
-    let h = '<div class="winnerbanner"><div class="crown">🏆</div><div class="sub" style="color:#cfe8f5">' + esc(game.name) + ' winner</div>' +
-      '<div class="wname">' + (winnerId ? nameWithDotHTML(game, winnerId) : esc(winner)) + '</div></div>';
+    const wIds = (game.winnerIds && game.winnerIds.length > 1) ? game.winnerIds : null;
+    let h = '<div class="winnerbanner"><div class="crown">🏆</div><div class="sub" style="color:#cfe8f5">' + esc(game.name) + (wIds ? ' — joint winners' : ' winner') + '</div>' +
+      '<div class="wname">' + (wIds
+        ? wIds.map(function (id) { return nameWithDotHTML(game, id); }).join(' &amp; ')
+        : (winnerId ? nameWithDotHTML(game, winnerId) : esc(winner))) + '</div></div>';
     if (game.format === 'rr' && game.playoffMatches) h += '<p class="note" style="text-align:center">Playoff champion — round robin standings below.</p>';
     h += '<div class="card"><table class="stand">';
     rows.forEach(function (r, i) {
       h += '<tr' + (i === 0 ? ' class="top"' : '') + '><td>' + (i + 1) + '</td><td>' + colorDotHTML(r.color ? colorByName(r.color) : null) + esc(r.name) +
         (r.cabin ? ' <span class="sub">(cabin ' + esc(r.cabin) + ')</span>' : '') + '</td><td class="num">' + esc(r.line) + '</td></tr>';
     });
-    h += '</table></div>' + shareButtonsHTML(game) +
+    h += '</table></div>';
+    if (qsActive(game)) h += qsBreakdownHTML(game);
+    h += shareButtonsHTML(game) +
       '<button class="btn block" id="againBtn" style="margin-top:14px">↻ Play again (same players)</button>' +
       '<button class="btn ghost block" id="finishHomeBtn">Home</button>';
     return h;
@@ -1188,6 +1632,13 @@
       matches: [], playoffMatches: null, status: 'playing', winnerId: null,
       createdAt: Date.now(), finishedAt: null
     };
+    if (old.format === 'quick' && qsActive(old)) {
+      game.qsRounds = {
+        mode: old.qsRounds.mode,
+        planned: clone(old.qsRounds.planned || []),
+        current: 1, rounds: [], outRound: {}, betweenRounds: false
+      };
+    }
     if (old.format === 'bracket') {
       game.matches = old.elim === 'double'
         ? E.buildDoubleElim(game.entries.map(function (e) { return e.id; }))
@@ -1220,7 +1671,8 @@
     finished.forEach(function (g) {
       h += '<div class="card row"><div>' + badge(g) + '</div><div class="grow"><div class="gamename">' + esc(g.name) + '</div>' +
         '<div class="sub">' + esc(formatLabel(g)) + ' · ' + fmtDate(g.finishedAt || g.createdAt) + ' · 🏆 ' + (g.winnerId ? nameWithDotHTML(g, g.winnerId) : '—') + '</div></div>' +
-        '<button class="btn small" data-view="' + g.id + '">View</button></div>';
+        '<button class="btn small" data-view="' + g.id + '">View</button>' +
+        '<button class="btn small danger" data-delhist="' + g.id + '">Delete</button></div>';
     });
     h += '<button class="btn ghost block" id="backBtn">Back</button>';
     return h;
@@ -1228,6 +1680,15 @@
   BINDS.history = function () {
     document.querySelectorAll('[data-view]').forEach(function (b) {
       b.addEventListener('click', function () { go('finish', b.getAttribute('data-view')); });
+    });
+    document.querySelectorAll('[data-delhist]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        const g = getGame(b.getAttribute('data-delhist'));
+        if (!g) return;
+        if (!confirm('Delete “' + g.name + '” from history? Its scores and results will be gone.')) return;
+        S.games = S.games.filter(function (x) { return x.id !== g.id; });
+        save(); render();
+      });
     });
     document.getElementById('backBtn').addEventListener('click', function () { go('home'); });
   };
