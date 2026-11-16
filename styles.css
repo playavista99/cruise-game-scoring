@@ -119,3 +119,45 @@ table.stand tr.top td { font-weight: 700; }
 .empty { text-align: center; color: #4a6072; padding: 22px 10px; }
 .divider { border: 0; border-top: 1px solid #d7e3ec; margin: 16px 0; }
 .hidden { display: none !important; }
+
+/* ----- Header ☰ menu ----- */
+.topbtns { display: flex; align-items: center; gap: 8px; }
+.menupanel {
+  position: absolute; top: calc(100% + 6px); right: 10px; z-index: 40;
+  background: #fff; color: #12212e; border-radius: 14px; min-width: 248px;
+  max-width: calc(100vw - 20px); box-shadow: 0 10px 30px #00000055;
+  padding: 6px; display: flex; flex-direction: column;
+}
+.menuitem {
+  display: flex; align-items: center; gap: 12px; width: 100%;
+  background: none; border: 0; border-radius: 10px; cursor: pointer;
+  padding: 13px 12px; font-size: 16.5px; font-weight: 600; color: #12212e;
+  text-align: left; text-decoration: none; min-height: 52px;
+}
+.menuitem:active { background: #e2ebf2; }
+.menuitem + .menuitem { border-top: 1px solid #e2ebf2; }
+.menuitem-ic { font-size: 21px; flex: 0 0 auto; width: 28px; text-align: center; }
+
+/* ----- Send feedback (bottom button + panel) — deliberately warm/bright
+   so it stands out from the app's blue theme, button AND panel alike. ----- */
+.btn.feedbackbtn {
+  background: #ffb703; color: #231900; border: 2px solid #e09e00;
+  box-shadow: 0 2px 8px #e09e0055; font-weight: 700;
+}
+.btn.feedbackbtn:active { filter: brightness(1.07); }
+.feedbackbox {
+  background: #fff9e8; border: 2px solid #e09e00; border-radius: 14px;
+  padding: 16px 14px; margin-top: 4px;
+}
+.feedbackbox h2 { color: #231900; }
+.feedbackbox .btn.feedbacksubmit { background: #ffb703; color: #231900; border: 2px solid #e09e00; font-weight: 700; }
+.feedbackbox .btn.feedbacksubmit:disabled { opacity: 0.55; }
+.fb-error { color: #b3261e; font-weight: 600; font-size: 15px; min-height: 1.2em; margin: 8px 0 0; }
+.fb-thanks { text-align: center; padding: 14px 0 4px; }
+.fb-thanks .thanks-ic { font-size: 42px; }
+.fb-thanks h2 { margin: 8px 0 4px; }
+
+/* ----- Share / QR panel ----- */
+.qrbox { display: flex; justify-content: center; padding: 10px 0 4px; }
+.qrbox svg { display: block; width: min(264px, 72vw); height: auto; }
+.shareurl { text-align: center; overflow-wrap: anywhere; font-weight: 600; color: #0b3b5e; margin: 8px 0 2px; }
