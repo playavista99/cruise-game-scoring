@@ -28,6 +28,7 @@ button { font-family: inherit; }
 .btn:active { filter: brightness(1.15); }
 .btn.secondary { background: #e2ebf2; color: #0b3b5e; }
 .btn.danger { background: #b3261e; }
+.btn.danger.confirming { background: #7a1710; outline: 3px solid #f0a49e; outline-offset: 1px; }
 .btn.ghost { background: transparent; color: #0b6fa4; border: 2px solid #0b6fa4; }
 .btn.small { min-height: 44px; padding: 8px 13px; font-size: 15px; border-radius: 10px; }
 .btn.block { width: 100%; margin: 8px 0; }
@@ -128,6 +129,7 @@ table.stand tr.top td { font-weight: 700; }
 .roundbanner-main { font-size: 19px; font-weight: 800; }
 .roundbanner-sub { font-size: 13.5px; color: #cfe8f5; margin-top: 2px; }
 .outcard { opacity: 0.55; }
+table.stand tr.outrow td { opacity: 0.55; }
 .tag.outtag { background: #f6d5d3; color: #7a1710; }
 .tgtlbl { flex: 0 0 72px; font-weight: 600; font-size: 15px; }
 .tgtspacer { width: 48px; flex: 0 0 auto; }
