@@ -14,9 +14,20 @@
       summary says so.
    4. Cumulative: two rounds add up; winner by running total.
    5. Old-format saves (no rounds fields, no winnerIds) load, play,
-      finish and render history normally; history Delete works.
+      finish and render history normally; history Delete works via
+      the two-step in-app confirm (v1.3.1 — no native confirm()).
    6. Classic Quick Score (rounds OFF) is unchanged: no qsRounds
-      state is created and the classic finish flow crowns the leader. */
+      state is created, the in-play leaderboard tracks the score,
+      and the classic finish flow crowns the leader.
+   7. Tie at the top -> joint winners.
+   8. (v1.3.1) Advance in-play leaderboard ranks by the CURRENT
+      round's score, best first, with Out entries below the active
+      ones; summary rows are best-first and Out rows are dimmed.
+   9. (v1.3.1) Cumulative in-play leaderboard ranks by the running
+      total (finished rounds + current round), not the round score.
+   10. (v1.3.1) History delete never calls window.confirm (stubbed
+       to throw): first tap arms, second deletes; the arm resets on
+       navigation and when its timer fires. */
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
@@ -52,6 +63,13 @@ const click = (el, what) => { if (!el) throw new Error('missing element: ' + wha
 const state = (w) => JSON.parse(w.localStorage.getItem('cgsa-state-v1'));
 const lastGame = (w) => { const g = state(w).games; return g[g.length - 1]; };
 const bodyText = (w) => w.document.body.textContent;
+// In-play leaderboard order: the "N. Name" headings of the player
+// cards on the play screen (the header card shows the game name,
+// which has no leading number, so it is filtered out).
+const lbOrder = () => $$('#app .gamename')
+  .map((el) => el.textContent.trim())
+  .filter((t) => /^\d+\.\s/.test(t))
+  .map((t) => t.replace(/^\d+\.\s*/, ''));
 
 function newGame(w, opts) {
   click($('#newGameBtn'), 'new game');
@@ -107,6 +125,12 @@ function setTotal(w, entryId, val) {
   ok(!game.qsRounds.outRound[ann] && !game.qsRounds.outRound[bob], 'S1: Ann and Bob still in');
   ok(bodyText(w).includes('Round 1 summary'), 'S1: summary screen shown');
   ok($$('#summaryFinishBtn').length === 1, 'S1: summary has Finish');
+  // Summary rows: advancers best-first, then the Out row, dimmed.
+  const sumRows = $$('table.stand tr').slice(1);
+  ok(sumRows.length === 3 && sumRows[0].textContent.includes('Ann') && sumRows[1].textContent.includes('Bob') && sumRows[2].textContent.includes('Cid'),
+    'S1: summary rows best-first (Ann, Bob, Cid), got ' + sumRows.map((tr) => tr.textContent.replace(/\s+/g, ' ').trim()).join(' | '));
+  ok(sumRows[2].classList.contains('outrow'), 'S1: Out row carries the dimming class');
+  ok(!sumRows[0].classList.contains('outrow') && !sumRows[1].classList.contains('outrow'), 'S1: advancer rows are not dimmed');
 
   // Scenario 2: set R2 target on the summary, play R2, finish.
   $('#nextTarget').value = '8';
@@ -210,8 +234,11 @@ function setTotal(w, entryId, val) {
   ok(bodyText(w).includes('Past Champ'), 'S5: old finished game renders its winner');
   click($('#finishHomeBtn'), 'home again');
   click($('#historyBtn'), 'history again');
-  click($('[data-delhist="old-fin"]'), 'delete old finished game');
-  ok(!state(w).games.some((x) => x.id === 'old-fin'), 'S5: history delete removes the game');
+  click($('[data-delhist="old-fin"]'), 'arm delete of old finished game');
+  ok(state(w).games.some((x) => x.id === 'old-fin'), 'S5: first Delete tap only arms the in-app confirm');
+  ok($('[data-delhist="old-fin"]').textContent.includes('Confirm delete?'), 'S5: armed button reads "Confirm delete?"');
+  click($('[data-delhist="old-fin"]'), 'confirm delete of old finished game');
+  ok(!state(w).games.some((x) => x.id === 'old-fin'), 'S5: second tap deletes the game');
   ok($$('[data-view]').length === 1, 'S5: history list re-renders with one entry');
 }
 
@@ -223,11 +250,16 @@ function setTotal(w, entryId, val) {
   ok(!('qsRounds' in g), 'S6: classic game has no qsRounds');
   tap(w, hal, 0, 1); // 3
   tap(w, ida, 1, 1); // 1
+  ok(JSON.stringify(lbOrder()) === JSON.stringify(['Hal', 'Ida']),
+    'S6: classic leaderboard ranks the leader first, got ' + JSON.stringify(lbOrder()));
+  tap(w, ida, 0, 1); // Ida 1 + 3 = 4, overtakes Hal
+  ok(JSON.stringify(lbOrder()) === JSON.stringify(['Ida', 'Hal']),
+    'S6: classic leaderboard re-sorts when the lead changes, got ' + JSON.stringify(lbOrder()));
   click($('#finishBtn'), 'finish classic');
   const game = lastGame(w);
-  ok(game.winnerId === hal, 'S6: classic winner is the leader');
-  ok(game.winnerIds && game.winnerIds[0] === hal, 'S6: winnerIds recorded');
-  ok($('.winnerbanner .wname').textContent.includes('Hal'), 'S6: classic winner banner');
+  ok(game.winnerId === ida, 'S6: classic winner is the leader');
+  ok(game.winnerIds && game.winnerIds[0] === ida, 'S6: winnerIds recorded');
+  ok($('.winnerbanner .wname').textContent.includes('Ida'), 'S6: classic winner banner');
 }
 
 /* ============ Scenario 7: tie at the top -> joint winners ============ */
@@ -243,6 +275,86 @@ function setTotal(w, entryId, val) {
   ok(bodyText(w).includes('joint winners'), 'S7: banner says joint winners');
   ok($('.winnerbanner .wname').textContent.includes('Jo') && $('.winnerbanner .wname').textContent.includes('Kim'),
     'S7: banner names both winners');
+}
+
+/* ============ Scenario 8 (v1.3.1): Advance in-play leaderboard order ============ */
+{
+  const w = boot();
+  const g = newGame(w, { rounds: true, mode: 'advance', targets: [5], players: ['Alpha', 'Bravo', 'Charlie'] });
+  const [alpha, bravo, charlie] = g.entries.map((e) => e.id);
+  // Round 1: Alpha 6, Bravo 5, Charlie 3 — sign-up order is NOT rank order.
+  tap(w, alpha, 0, 2); tap(w, bravo, 0, 1); tap(w, bravo, 1, 2); tap(w, charlie, 0, 1);
+  ok(JSON.stringify(lbOrder()) === JSON.stringify(['Alpha', 'Bravo', 'Charlie']),
+    'S8: Advance leaderboard ranks by current-round score, best first, got ' + JSON.stringify(lbOrder()));
+  click($('#endRoundBtn'), 'end round 1');
+  click($('#startNextBtn'), 'start round 2');
+  const order2 = lbOrder();
+  ok(order2[order2.length - 1] === 'Charlie', 'S8: Out entry sits below the active entries in round 2, got ' + JSON.stringify(order2));
+  const charlieCard = $$('#app .gamename').find((el) => el.textContent.includes('Charlie')).closest('.card');
+  ok(charlieCard && charlieCard.classList.contains('outcard'), 'S8: Out entry card is dimmed in play');
+}
+
+/* ============ Scenario 9 (v1.3.1): Cumulative leaderboard uses running total ============ */
+{
+  const w = boot();
+  const g = newGame(w, { rounds: true, mode: 'cumulative', players: ['Fay', 'Gil'] });
+  const [fay, gil] = g.entries.map((e) => e.id);
+  tap(w, gil, 0, 1); tap(w, gil, 1, 2); // Gil R1: 5
+  tap(w, fay, 1, 1); // Fay R1: 1
+  click($('#endRoundBtn'), 'end round 1');
+  click($('#startNextBtn'), 'start round 2');
+  tap(w, fay, 0, 1); // Fay R2: 3 -> running total 4. Gil has 0 this round but 5 total.
+  ok(JSON.stringify(lbOrder()) === JSON.stringify(['Gil', 'Fay']),
+    'S9: Cumulative leaderboard ranks by running total (Gil 5 over Fay 4) even though Fay leads round 2, got ' + JSON.stringify(lbOrder()));
+}
+
+/* ============ Scenario 10 (v1.3.1): history delete, no native confirm ============ */
+{
+  const def = { attempts: 4, winDir: 'high', buttons: [{ label: 'In the hole', points: 3 }, { label: 'On board', points: 1 }, { label: 'Miss', points: 0 }] };
+  const fin = (id, name) => ({
+    id, templateId: 'builtin-beanbag', name: 'Bean Bag Toss', icon: '🌽', color: '#ea580c', def,
+    format: 'quick', entryKind: 'individuals', scoreMode: 'tap', elim: 'single',
+    entries: [{ id: id + '-e1', name, cabin: '', color: 'Red', taps: [0], total: null }],
+    matches: [], playoffMatches: null, status: 'finished', winnerId: id + '-e1', createdAt: Date.now() - 2000, finishedAt: Date.now() - 1000
+  });
+  const seed = { templates: [], games: [fin('del-a', 'Del A'), fin('del-b', 'Del B')] };
+  const w = boot(seed);
+  w.confirm = () => { throw new Error('window.confirm must never be called'); };
+  click($('#historyBtn'), 'history');
+  // Two-step: first tap arms only, second deletes.
+  click($('[data-delhist="del-a"]'), 'arm delete A');
+  ok(state(w).games.some((x) => x.id === 'del-a'), 'S10: first tap does not delete');
+  ok($('[data-delhist="del-a"]').textContent.includes('Confirm delete?'), 'S10: armed button reads "Confirm delete?"');
+  click($('[data-delhist="del-a"]'), 'confirm delete A');
+  ok(!state(w).games.some((x) => x.id === 'del-a'), 'S10: second tap deletes A');
+  ok($$('[data-view]').length === 1, 'S10: list re-renders with one entry');
+  // Arm resets on other interaction: arm B, wander off via View, come
+  // back — the next Delete tap must only re-arm, not delete.
+  click($('[data-delhist="del-b"]'), 'arm delete B');
+  click($('[data-view="del-b"]'), 'view B (other interaction)');
+  click($('#finishHomeBtn'), 'home from finish');
+  click($('#historyBtn'), 'history again');
+  click($('[data-delhist="del-b"]'), 'delete B after returning');
+  ok(state(w).games.some((x) => x.id === 'del-b'), 'S10: arm was reset by navigation — tap only re-arms');
+  ok($('[data-delhist="del-b"]').textContent.includes('Confirm delete?'), 'S10: B armed again');
+  click($('[data-delhist="del-b"]'), 'confirm delete B');
+  ok(!state(w).games.some((x) => x.id === 'del-b'), 'S10: B deleted on the confirming tap');
+
+  // Arm resets when its timer fires (capture the timeout callback).
+  const w2 = boot({ templates: [], games: [fin('del-c', 'Del C')] });
+  w2.confirm = () => { throw new Error('window.confirm must never be called'); };
+  click($('#historyBtn'), 'history (timer case)');
+  let armCb = null;
+  const realST = w2.setTimeout;
+  w2.setTimeout = (cb) => { armCb = cb; return 1; };
+  click($('[data-delhist="del-c"]'), 'arm delete C');
+  w2.setTimeout = realST;
+  ok(typeof armCb === 'function', 'S10: arming schedules a reset timer');
+  ok($('[data-delhist="del-c"]').textContent.includes('Confirm delete?'), 'S10: C armed');
+  armCb(); // simulate the timer firing
+  ok($('[data-delhist="del-c"]').textContent.trim() === 'Delete', 'S10: timer firing disarms the button');
+  click($('[data-delhist="del-c"]'), 'delete C after timer reset');
+  ok(state(w2).games.some((x) => x.id === 'del-c'), 'S10: post-timer tap only re-arms, C still present');
 }
 
 console.log(`\n${checks} checks, ${failures} failures`);
