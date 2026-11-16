@@ -48,6 +48,57 @@
     const e = game.entries.find(function (x) { return x.id === id; });
     return e ? e.name : '—';
   }
+
+  /* ---------------- entry colors ----------------
+     Every entry (player or team, every game) carries a color so staff
+     can tell entries apart — bean bags are literally red vs blue.
+     Entries auto-get the next palette color in sign-up order (so Bean
+     Bag Toss starts Red vs Blue); the stored value is the color NAME
+     ('Red'). Games saved before colors existed have no color field:
+     entryColor() falls back to the palette color by entry position,
+     so old games render correctly and never crash. */
+  const ENTRY_COLORS = [
+    { name: 'Red', hex: '#dc2626' }, { name: 'Blue', hex: '#2563eb' },
+    { name: 'Green', hex: '#16a34a' }, { name: 'Yellow', hex: '#eab308' },
+    { name: 'Orange', hex: '#ea580c' }, { name: 'Purple', hex: '#9333ea' },
+    { name: 'Black', hex: '#111827' }, { name: 'White', hex: '#f8fafc' }
+  ];
+  function paletteAt(i) { return ENTRY_COLORS[((i % ENTRY_COLORS.length) + ENTRY_COLORS.length) % ENTRY_COLORS.length]; }
+  function colorByName(name) {
+    return ENTRY_COLORS.find(function (c) { return c.name === name; }) || null;
+  }
+  function entryColor(list, e) {
+    if (!e) return null;
+    const stored = e.color ? colorByName(e.color) : null;
+    if (stored) return stored;
+    const i = list ? list.indexOf(e) : -1;
+    return paletteAt(i < 0 ? 0 : i);
+  }
+  function entryColorById(game, id) {
+    if (!game || !id) return null;
+    const e = game.entries.find(function (x) { return x.id === id; });
+    return e ? entryColor(game.entries, e) : null;
+  }
+  function colorDotHTML(color) {
+    if (!color) return '';
+    return '<span class="colordot" style="background:' + color.hex + '" aria-hidden="true"></span>';
+  }
+  function entryDotHTML(game, id) { return colorDotHTML(entryColorById(game, id)); }
+  // Dot + escaped name — drop-in for HTML spots that used esc(entryName(...)).
+  function nameWithDotHTML(game, id) { return entryDotHTML(game, id) + esc(entryName(game, id)); }
+  function showColorPicker(currentName, onPick) {
+    let h = '<h2 style="margin-top:0">Choose a color</h2><div class="palettegrid">';
+    ENTRY_COLORS.forEach(function (c) {
+      h += '<button class="palettebtn' + (c.name === currentName ? ' on' : '') + '" data-pickcolor="' + c.name + '">' +
+        '<span class="colordot big" style="background:' + c.hex + '"></span>' + c.name + '</button>';
+    });
+    h += '</div><button class="btn ghost block" id="cpCancel">Cancel</button>';
+    openModal(h);
+    document.querySelectorAll('[data-pickcolor]').forEach(function (b) {
+      b.addEventListener('click', function () { closeModal(); onPick(b.getAttribute('data-pickcolor')); });
+    });
+    document.getElementById('cpCancel').addEventListener('click', closeModal);
+  }
   function clone(o) { return JSON.parse(JSON.stringify(o)); }
 
   /* ---------------- tiny DOM helpers ---------------- */
@@ -462,8 +513,12 @@
     return h;
   };
   function entryRowHTML(e, i) {
-    return '<div class="card row" style="margin:6px 0;padding:10px 12px"><div class="grow">' +
+    const c = entryColor(draft.entries, e);
+    return '<div class="card row" style="margin:6px 0;padding:10px 12px">' +
+      '<button class="colorswatch" data-colorpick="' + i + '" style="background:' + c.hex + '" aria-label="Color: ' + c.name + '. Tap to change"></button>' +
+      '<div class="grow">' +
       '<span class="gamename" style="font-size:16px">' + (i + 1) + '. ' + esc(e.name) + '</span>' +
+      '<span class="tag">' + c.name + '</span>' +
       (e.cabin ? '<span class="tag">Cabin ' + esc(e.cabin) + '</span>' : '') +
       (e.members ? '<div class="sub">' + esc(e.members) + '</div>' : '') +
       '</div><button class="iconbtn" data-delentry="' + i + '" aria-label="Remove">✕</button></div>';
@@ -477,6 +532,16 @@
           refresh();
         });
       });
+      document.querySelectorAll('[data-colorpick]').forEach(function (b) {
+        b.addEventListener('click', function () {
+          const entry = draft.entries[parseInt(b.getAttribute('data-colorpick'), 10)];
+          if (!entry) return;
+          showColorPicker(entryColor(draft.entries, entry).name, function (colorName) {
+            entry.color = colorName;
+            refresh();
+          });
+        });
+      });
       document.getElementById('entryCount').textContent = draft.entries.length + (draft.entryKind === 'teams' ? ' teams' : ' players');
       const pv = document.getElementById('rrPreview');
       if (pv) pv.textContent = draft.format === 'rr' ? rrPreview(draft.entries.length) : '';
@@ -486,7 +551,7 @@
       const nm = document.getElementById('newName');
       const name = nm.value.trim();
       if (!name) { nm.focus(); return; }
-      const e = { id: E.uid('e'), name: name, cabin: document.getElementById('newCabin').value.trim() };
+      const e = { id: E.uid('e'), name: name, cabin: document.getElementById('newCabin').value.trim(), color: paletteAt(draft.entries.length).name };
       const mem = document.getElementById('newMembers');
       if (mem && mem.value.trim()) e.members = mem.value.trim();
       draft.entries.push(e);
@@ -523,7 +588,10 @@
       entries: clone(draft.entries), matches: [], playoffMatches: null,
       status: 'playing', winnerId: null, createdAt: Date.now(), finishedAt: null
     };
-    game.entries.forEach(function (e) { e.taps = []; e.total = null; });
+    game.entries.forEach(function (e, i) {
+      e.taps = []; e.total = null;
+      if (!colorByName(e.color || '')) e.color = paletteAt(i).name;
+    });
     if (draft.format === 'bracket') {
       game.matches = draft.elim === 'double'
         ? E.buildDoubleElim(game.entries.map(function (e) { return e.id; }))
@@ -648,8 +716,11 @@
     let h = '<h2>Leaderboard</h2>';
     sorted.forEach(function (e, i) {
       const sc = quickScore(game, e);
-      h += '<div class="card" style="margin:8px 0;padding:12px"><div class="row spread">' +
-        '<div class="grow"><span class="gamename" style="font-size:17px">' + (i + 1) + '. ' + esc(e.name) + '</span>' +
+      const ec = entryColor(game.entries, e);
+      const tint = (game.templateId === 'builtin-beanbag' && game.scoreMode === 'tap')
+        ? ';border-left:7px solid ' + ec.hex : '';
+      h += '<div class="card" style="margin:8px 0;padding:12px' + tint + '"><div class="row spread">' +
+        '<div class="grow">' + colorDotHTML(ec) + '<span class="gamename" style="font-size:17px">' + (i + 1) + '. ' + esc(e.name) + '</span>' +
         (e.cabin ? '<span class="tag">Cabin ' + esc(e.cabin) + '</span>' : '') + '</div>' +
         '<div class="score" style="font-size:20px;font-weight:800">' + (sc === null ? '—' : sc) + '</div></div>';
       if (game.scoreMode === 'tap') {
@@ -695,7 +766,7 @@
     document.getElementById('walkAdd').addEventListener('click', function () {
       const nm = document.getElementById('walkName');
       if (!nm.value.trim()) { nm.focus(); return; }
-      game.entries.push({ id: E.uid('e'), name: nm.value.trim(), cabin: document.getElementById('walkCabin').value.trim(), taps: [], total: null });
+      game.entries.push({ id: E.uid('e'), name: nm.value.trim(), cabin: document.getElementById('walkCabin').value.trim(), color: paletteAt(game.entries.length).name, taps: [], total: null });
       save(); render();
     });
   }
@@ -715,17 +786,21 @@
     }
     return 'TBD';
   }
+  function sideNameHTML(game, matches, m, side) {
+    const id = side === 'a' ? m.aId : m.bId;
+    return id ? nameWithDotHTML(game, id) : esc(sideName(game, matches, m, side));
+  }
   function matchCardHTML(game, matches, m, where) {
     const isOpen = openScorer && openScorer.matchId === m.id;
     let vs, scoreTxt = '';
     if (m.autoBye) {
-      vs = esc(entryName(game, m.winnerId)) + ' <span class="tag">bye</span>';
+      vs = nameWithDotHTML(game, m.winnerId) + ' <span class="tag">bye</span>';
     } else {
-      vs = esc(sideName(game, matches, m, 'a')) + ' <span class="sub">vs</span> ' + esc(sideName(game, matches, m, 'b'));
+      vs = sideNameHTML(game, matches, m, 'a') + ' <span class="sub">vs</span> ' + sideNameHTML(game, matches, m, 'b');
     }
     if (m.scored && !m.autoBye) scoreTxt = '<span class="score">' + m.sa + ' – ' + m.sb + '</span>';
     let winnerTag = '';
-    if (m.scored && m.winnerId && !m.autoBye) winnerTag = '<span class="tag win">✓ ' + esc(entryName(game, m.winnerId)) + '</span>';
+    if (m.scored && m.winnerId && !m.autoBye) winnerTag = '<span class="tag win">✓ ' + nameWithDotHTML(game, m.winnerId) + '</span>';
     const canScore = !m.autoBye && m.aId && m.bId;
     let h = '<div class="match"><div class="row spread"><div class="grow"><span class="sub">' + matchLabel(game, matches, m) + '</span> ' +
       '<span class="vs">' + vs + '</span>' + winnerTag + '</div>' + scoreTxt + '</div>';
@@ -741,16 +816,18 @@
     const def = game.def;
     let h = '<div class="scorer" id="scorerBox">';
     if (game.scoreMode === 'total') {
-      h += '<div class="sidebox"><div class="who">' + esc(entryName(game, m.aId)) + '</div>' +
+      h += '<div class="sidebox"><div class="who">' + nameWithDotHTML(game, m.aId) + '</div>' +
         '<input type="text" inputmode="numeric" id="scA" value="' + (m.sa === null ? '' : m.sa) + '" placeholder="Final total"></div>' +
-        '<div class="sidebox"><div class="who">' + esc(entryName(game, m.bId)) + '</div>' +
+        '<div class="sidebox"><div class="who">' + nameWithDotHTML(game, m.bId) + '</div>' +
         '<input type="text" inputmode="numeric" id="scB" value="' + (m.sb === null ? '' : m.sb) + '" placeholder="Final total"></div>';
     } else {
       [ ['a', m.aId], ['b', m.bId] ].forEach(function (pair) {
         const side = pair[0], eid = pair[1];
         const taps = side === 'a' ? openScorer.tapsA : openScorer.tapsB;
         const total = E.tapsTotal(def, taps);
-        h += '<div class="sidebox"><div class="row spread"><div class="who">' + esc(entryName(game, eid)) + '</div>' +
+        const ec = entryColorById(game, eid);
+        const tint = (game.templateId === 'builtin-beanbag' && ec) ? ' style="border-left:7px solid ' + ec.hex + '"' : '';
+        h += '<div class="sidebox"' + tint + '><div class="row spread"><div class="who">' + nameWithDotHTML(game, eid) + '</div>' +
           '<div class="sub"><span id="scCount' + side + '">' + taps.length + '/' + def.attempts + '</span> · <b id="scTotal' + side + '">' + total + '</b> pts</div></div>' +
           '<div class="taprow">' + def.buttons.map(function (b, bi) {
             return '<button class="tapbtn" data-mtap="' + side + ':' + bi + '"' + (taps.length >= def.attempts ? ' disabled' : '') + '>' + esc(b.label) + '<small>' + b.points + ' pts</small></button>';
@@ -874,7 +951,7 @@
       });
     });
     const champ = E.resolveBracket(game.def, matches);
-    if (champ) h += '<div class="winnerbanner"><div class="crown">🏆</div><div class="sub" style="color:#cfe8f5">Champion</div><div class="wname">' + esc(entryName(game, champ)) + '</div></div>';
+    if (champ) h += '<div class="winnerbanner"><div class="crown">🏆</div><div class="sub" style="color:#cfe8f5">Champion</div><div class="wname">' + nameWithDotHTML(game, champ) + '</div></div>';
     return h;
   }
 
@@ -885,7 +962,7 @@
       (game.entryKind === 'teams' ? 'Team' : 'Player') + '</th><th class="num">P</th><th class="num">W</th><th class="num">L</th><th class="num">Diff</th><th class="num">Pts</th></tr>';
     st.forEach(function (r, i) {
       const e = game.entries.find(function (x) { return x.id === r.id; });
-      h += '<tr' + (i === 0 ? ' class="top"' : '') + '><td>' + (i + 1) + '</td><td>' + esc(e ? e.name : r.id) +
+      h += '<tr' + (i === 0 ? ' class="top"' : '') + '><td>' + (i + 1) + '</td><td>' + (e ? entryDotHTML(game, e.id) : '') + esc(e ? e.name : r.id) +
         (e && e.cabin ? ' <span class="sub">(' + esc(e.cabin) + ')</span>' : '') + '</td>' +
         '<td class="num">' + r.played + '</td><td class="num">' + r.w + '</td><td class="num">' + r.l + '</td>' +
         '<td class="num">' + (r.diff > 0 ? '+' : '') + r.diff + '</td><td class="num">' + r.pf + '</td></tr>';
@@ -897,7 +974,7 @@
     rounds.forEach(function (r) {
       h += '<h3>Round ' + r + '</h3>';
       if (game.rrByeByRound && game.rrByeByRound[r]) {
-        h += '<p class="note">Bye this round: <b>' + esc(entryName(game, game.rrByeByRound[r])) + '</b>' + (game.rrPairing === 'results' ? ' (counts as one of their games)' : '') + '</p>';
+        h += '<p class="note">Bye this round: <b>' + nameWithDotHTML(game, game.rrByeByRound[r]) + '</b>' + (game.rrPairing === 'results' ? ' (counts as one of their games)' : '') + '</p>';
       }
       game.matches.filter(function (m) { return m.round === r; }).forEach(function (m) {
         h += matchCardHTML(game, game.matches, m, 'rr');
@@ -913,7 +990,7 @@
       }
     }
     if (rrDone(game)) {
-      h += '<div class="card"><b>Round robin complete.</b> <span class="sub">Leader: ' + esc(st.length ? entryName(game, st[0].id) : '—') + '</span></div>';
+      h += '<div class="card"><b>Round robin complete.</b> <span class="sub">Leader: ' + (st.length ? nameWithDotHTML(game, st[0].id) : '—') + '</span></div>';
       if (game.playoffSize > 0 && !game.playoffMatches) {
         const k = Math.min(game.playoffSize, game.entries.length);
         if (k >= 2) h += '<button class="btn block" id="startPlayoffBtn">Start playoff — top ' + k + ' (' + (game.playoffElim === 'double' ? 'double' : 'single') + ' elimination)</button>';
@@ -985,34 +1062,36 @@
 
   /* ----- Finish + sharing ----- */
   function finalStandings(game) {
-    // Returns [{id, name, cabin, line}] in finishing order, best first.
+    // Returns [{id, name, cabin, color, line}] in finishing order, best first.
     if (game.format === 'quick') {
       return quickSorted(game).map(function (e) {
         const sc = quickScore(game, e);
-        return { id: e.id, name: e.name, cabin: e.cabin, line: (sc === null ? '—' : sc + ' pts') };
+        return { id: e.id, name: e.name, cabin: e.cabin, color: entryColor(game.entries, e).name, line: (sc === null ? '—' : sc + ' pts') };
       });
     }
     if (game.format === 'rr') {
       return E.computeStandings(game.entries, game.matches, game.def).map(function (r) {
         const e = game.entries.find(function (x) { return x.id === r.id; });
-        return { id: r.id, name: e ? e.name : r.id, cabin: e ? e.cabin : '', line: r.w + 'W–' + r.l + 'L' + (r.d ? '–' + r.d + 'D' : '') + ' · ' + r.pf + ' pts' };
+        return { id: r.id, name: e ? e.name : r.id, cabin: e ? e.cabin : '', color: e ? entryColor(game.entries, e).name : '', line: r.w + 'W–' + r.l + 'L' + (r.d ? '–' + r.d + 'D' : '') + ' · ' + r.pf + ' pts' };
       });
     }
     // Bracket: champion first, then everyone else in seed order.
     const champ = game.winnerId;
     const rest = game.entries.filter(function (e) { return e.id !== champ; });
     const out = [];
-    if (champ) { const c = game.entries.find(function (e) { return e.id === champ; }); out.push({ id: c.id, name: c.name, cabin: c.cabin, line: 'Champion' }); }
-    rest.forEach(function (e) { out.push({ id: e.id, name: e.name, cabin: e.cabin, line: '' }); });
+    if (champ) { const c = game.entries.find(function (e) { return e.id === champ; }); out.push({ id: c.id, name: c.name, cabin: c.cabin, color: entryColor(game.entries, c).name, line: 'Champion' }); }
+    rest.forEach(function (e) { out.push({ id: e.id, name: e.name, cabin: e.cabin, color: entryColor(game.entries, e).name, line: '' }); });
     return out;
   }
   function resultsText(game) {
     const rows = finalStandings(game);
     const winner = game.winnerId ? entryName(game, game.winnerId) : (rows.length ? rows[0].name : '—');
-    let txt = game.name + ' — ' + formatLabel(game) + '\n' + fmtDate(game.finishedAt || game.createdAt) + '\n🏆 Winner: ' + winner + '\n';
-    if (game.format === 'rr' && game.playoffMatches && game.winnerId) txt += 'Playoff champion: ' + winner + '\n';
+    const winnerColor = game.winnerId ? (entryColorById(game, game.winnerId) || {}).name : (rows.length ? rows[0].color : '');
+    const winnerTxt = winner + (winnerColor ? ' (' + winnerColor + ')' : '');
+    let txt = game.name + ' — ' + formatLabel(game) + '\n' + fmtDate(game.finishedAt || game.createdAt) + '\n🏆 Winner: ' + winnerTxt + '\n';
+    if (game.format === 'rr' && game.playoffMatches && game.winnerId) txt += 'Playoff champion: ' + winnerTxt + '\n';
     txt += '\nResults:\n';
-    rows.forEach(function (r, i) { txt += (i + 1) + '. ' + r.name + (r.cabin ? ' (cabin ' + r.cabin + ')' : '') + (r.line ? ' — ' + r.line : '') + '\n'; });
+    rows.forEach(function (r, i) { txt += (i + 1) + '. ' + r.name + (r.color ? ' (' + r.color + ')' : '') + (r.cabin ? ' (cabin ' + r.cabin + ')' : '') + (r.line ? ' — ' + r.line : '') + '\n'; });
     return txt;
   }
   function download(filename, blob) {
@@ -1040,6 +1119,13 @@
     c.fillStyle = '#ffffff'; c.fillRect(0, 300, cv.width, cv.height - 300);
     c.textAlign = 'left'; c.fillStyle = '#12212e';
     rows.forEach(function (r, i) {
+      const pc = r.color ? colorByName(r.color) : null;
+      if (pc) {
+        c.beginPath(); c.arc(36, 358 + i * 52, 10, 0, Math.PI * 2);
+        c.fillStyle = pc.hex; c.fill();
+        c.strokeStyle = '#94a3b8'; c.lineWidth = 1.5; c.stroke();
+        c.fillStyle = '#12212e';
+      }
       c.font = (i === 0 ? '700 ' : '400 ') + '30px system-ui, sans-serif';
       c.fillText((i + 1) + '. ' + r.name, 60, 368 + i * 52);
       c.textAlign = 'right'; c.fillStyle = '#4a6072'; c.font = '400 26px system-ui, sans-serif';
@@ -1070,12 +1156,13 @@
     if (!game) return '<p class="empty">Game not found.</p>';
     const rows = finalStandings(game);
     const winner = game.winnerId ? entryName(game, game.winnerId) : (rows.length ? rows[0].name : '—');
+    const winnerId = game.winnerId || (rows.length ? rows[0].id : null);
     let h = '<div class="winnerbanner"><div class="crown">🏆</div><div class="sub" style="color:#cfe8f5">' + esc(game.name) + ' winner</div>' +
-      '<div class="wname">' + esc(winner) + '</div></div>';
+      '<div class="wname">' + (winnerId ? nameWithDotHTML(game, winnerId) : esc(winner)) + '</div></div>';
     if (game.format === 'rr' && game.playoffMatches) h += '<p class="note" style="text-align:center">Playoff champion — round robin standings below.</p>';
     h += '<div class="card"><table class="stand">';
     rows.forEach(function (r, i) {
-      h += '<tr' + (i === 0 ? ' class="top"' : '') + '><td>' + (i + 1) + '</td><td>' + esc(r.name) +
+      h += '<tr' + (i === 0 ? ' class="top"' : '') + '><td>' + (i + 1) + '</td><td>' + colorDotHTML(r.color ? colorByName(r.color) : null) + esc(r.name) +
         (r.cabin ? ' <span class="sub">(cabin ' + esc(r.cabin) + ')</span>' : '') + '</td><td class="num">' + esc(r.line) + '</td></tr>';
     });
     h += '</table></div>' + shareButtonsHTML(game) +
@@ -1095,8 +1182,8 @@
     const game = {
       id: E.uid('g'), templateId: old.templateId, name: old.name, icon: old.icon, color: old.color,
       def: clone(old.def), format: old.format, entryKind: old.entryKind, scoreMode: old.scoreMode,
-      elim: old.elim, entries: old.entries.map(function (e) {
-        return { id: e.id, name: e.name, cabin: e.cabin, members: e.members, taps: [], total: null };
+      elim: old.elim, entries: old.entries.map(function (e, i) {
+        return { id: e.id, name: e.name, cabin: e.cabin, members: e.members, color: colorByName(e.color || '') ? e.color : paletteAt(i).name, taps: [], total: null };
       }),
       matches: [], playoffMatches: null, status: 'playing', winnerId: null,
       createdAt: Date.now(), finishedAt: null
@@ -1132,7 +1219,7 @@
     if (!finished.length) h += '<p class="empty">No finished games yet.</p>';
     finished.forEach(function (g) {
       h += '<div class="card row"><div>' + badge(g) + '</div><div class="grow"><div class="gamename">' + esc(g.name) + '</div>' +
-        '<div class="sub">' + esc(formatLabel(g)) + ' · ' + fmtDate(g.finishedAt || g.createdAt) + ' · 🏆 ' + esc(g.winnerId ? entryName(g, g.winnerId) : '—') + '</div></div>' +
+        '<div class="sub">' + esc(formatLabel(g)) + ' · ' + fmtDate(g.finishedAt || g.createdAt) + ' · 🏆 ' + (g.winnerId ? nameWithDotHTML(g, g.winnerId) : '—') + '</div></div>' +
         '<button class="btn small" data-view="' + g.id + '">View</button></div>';
     });
     h += '<button class="btn ghost block" id="backBtn">Back</button>';
