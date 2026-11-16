@@ -1,7 +1,7 @@
 /* Offline shell cache for the Cruise Game Scoring App.
    The app itself stores all data in localStorage; this worker only
    caches the static shell so the app opens with no connection. */
-const CACHE = 'cgsa-shell-v3';
+const CACHE = 'cgsa-shell-v4';
 const SHELL = [
   './',
   './index.html',
@@ -28,16 +28,16 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
   if (event.request.method !== 'GET' || url.origin !== self.location.origin) return;
+  /* Network-first: a fresh deploy must never mix an old cached app.js
+     with a new index.html (that mix left the menu button dead). The
+     cache is only the offline fallback. */
   event.respondWith(
-    caches.match(event.request).then((hit) => {
-      const network = fetch(event.request).then((res) => {
-        if (res && res.status === 200) {
-          const copy = res.clone();
-          caches.open(CACHE).then((c) => c.put(event.request, copy));
-        }
-        return res;
-      }).catch(() => hit);
-      return hit || network;
-    })
+    fetch(event.request).then((res) => {
+      if (res && res.status === 200) {
+        const copy = res.clone();
+        caches.open(CACHE).then((c) => c.put(event.request, copy));
+      }
+      return res;
+    }).catch(() => caches.match(event.request))
   );
 });
