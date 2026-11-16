@@ -19,13 +19,23 @@ localStorage on the device. Nothing about players or games leaves the
 device. An optional staff account (Supabase Auth) syncs *custom
 templates only* across a staffer's devices.
 
+**☰ Menu (top right):** *Install this app* (PWA install prompt, or
+Add-to-Home-Screen instructions) · *Share / QR code* (a QR code for
+this site's URL, generated on-device by `qr.js` — nothing is fetched —
+plus Share / Copy link) · *Join the WhatsApp group* (only shown when
+`WHATSAPP_GROUP_URL` is set in `config.js`) · *Send feedback*. The
+same feedback form is also behind the **Send feedback** button at the
+bottom of the home page. Feedback is written to the Supabase
+`feedback` table (insert-only — see below).
+
 ## Files
 
 | File | What it is |
 |---|---|
 | `index.html`, `styles.css`, `app.js` | The app |
 | `engines.js` | Tournament engines (brackets, round robin, Swiss pairing, standings) — shared by the page and the tests |
-| `config.js` | Supabase URL + anon key for the optional account (blank = accounts off) |
+| `qr.js` | QR Code Generator for JavaScript (Kazuhiko Arase, MIT) — draws the share QR code on-device, works offline |
+| `config.js` | Supabase URL + anon key for the optional account (blank = accounts off), plus `WHATSAPP_GROUP_URL` for the menu's WhatsApp entry (blank = entry hidden) |
 | `sw.js`, `manifest.webmanifest`, `icon.svg` | Offline shell / installable PWA bits |
 | `supabase/schema.sql` | One-time database setup for the optional account |
 | `tests/engines.test.mjs` | Engine verification: `node tests/engines.test.mjs` |
@@ -45,7 +55,12 @@ Accounts are optional and the app works without them. To switch them on:
    (any name, e.g. `cruise-game-scoring`).
 2. In the project, open **SQL Editor**, paste in `supabase/schema.sql`,
    and run it. That creates the `templates` table with owner-only
-   Row Level Security.
+   Row Level Security, **and the `feedback` table** (insert-only:
+   anyone can send feedback from the app, nobody can read it back
+   through the API — read submissions in the Supabase Table editor).
+   Feedback needs that table: if it hasn't been created yet, the
+   app's feedback form reports that the message couldn't be sent
+   instead of pretending it worked.
 3. In **Project Settings → API**, copy the **Project URL** and the
    **anon public** key (never the service_role key).
 4. Paste both into `config.js` in this repo and commit.
