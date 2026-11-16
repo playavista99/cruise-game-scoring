@@ -10,5 +10,9 @@
  */
 window.APP_CONFIG = {
   SUPABASE_URL: 'https://zwvtupimuzlvghwikvqr.supabase.co',
-  SUPABASE_ANON_KEY: 'sb_publishable_-TLl7C0z8K6mx5K0TNawrw_FQoevBWv'
+  SUPABASE_ANON_KEY: 'sb_publishable_-TLl7C0z8K6mx5K0TNawrw_FQoevBWv',
+  /* Optional: paste a WhatsApp group invite link (https://chat.whatsapp.com/…)
+     to show a "Join the WhatsApp group" entry in the ☰ menu.
+     Leave empty and the entry stays hidden. */
+  WHATSAPP_GROUP_URL: ''
 };
