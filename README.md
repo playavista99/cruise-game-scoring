@@ -14,6 +14,20 @@ Axe Throw, Shuffleboard, Mini Golf — every scoring rule editable at
 setup and mid-game — plus a custom game builder with export/import
 codes so a whole activity team can run identical setups.
 
+**Quick Score rounds:** Quick Score games can optionally play in
+rounds (set at setup; brackets and round robins are unaffected). Two
+scoring bases: **Cumulative** — each round's score adds to a running
+total — or **Advance** — reach the round's target to stay in; anyone
+below it is out (if nobody reaches a target, the round's top scorer(s)
+advance instead, so a game never dead-ends). Round targets can be
+planned at setup *and/or* set or changed on the summary screen after
+each round, and rounds keep being added until staff finish the game —
+there is no fixed round count. Finishing crowns the best running total
+(Cumulative) or the best score in the final round among those still in
+(Advance); ties are joint winners. The finish screen and history show
+a round-by-round breakdown, and Play Again keeps the rounds setup.
+Games saved before rounds existed load as classic Quick Score.
+
 **Entry colors:** every player or team in every game gets a color
 (Red, Blue, Green, Yellow, Orange, Purple, Black, White), assigned
 automatically in sign-up order — so Bean Bag Toss starts Red vs Blue —
