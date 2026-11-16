@@ -120,6 +120,18 @@ table.stand tr.top td { font-weight: 700; }
 .divider { border: 0; border-top: 1px solid #d7e3ec; margin: 16px 0; }
 .hidden { display: none !important; }
 
+/* ----- Quick Score rounds ----- */
+.roundbanner {
+  background: linear-gradient(135deg, #0b3b5e, #0b6fa4); color: #fff;
+  border-radius: 12px; padding: 12px 14px; margin: 10px 0 2px;
+}
+.roundbanner-main { font-size: 19px; font-weight: 800; }
+.roundbanner-sub { font-size: 13.5px; color: #cfe8f5; margin-top: 2px; }
+.outcard { opacity: 0.55; }
+.tag.outtag { background: #f6d5d3; color: #7a1710; }
+.tgtlbl { flex: 0 0 72px; font-weight: 600; font-size: 15px; }
+.tgtspacer { width: 48px; flex: 0 0 auto; }
+
 /* ----- Entry colors ----- */
 .colordot {
   display: inline-block; width: 12px; height: 12px; border-radius: 50%;
