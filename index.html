@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Cruise Game Scoring</title>
+<meta name="description" content="Score cruise ship deck games on one phone or tablet: Quick Score, Bracket, and Round Robin tournaments. Works offline.">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#0b3b5e">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="topbar">
+  <button class="brand" id="brandBtn" aria-label="Home">
+    <span class="brand-icon">🏆</span><span class="brand-name">Game Scoring</span>
+  </button>
+  <button class="topbtn" id="accountBtn">Account</button>
+</header>
+<main id="app" class="app"></main>
+<div id="modalRoot"></div>
+<script src="config.js"></script>
+<script src="engines.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="app.js"></script>
+</body>
+</html>
