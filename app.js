@@ -794,22 +794,26 @@
   // Play-screen order: classic games keep quickSorted exactly. Cumulative
   // sorts by running total; Advance puts entries still in first (by this
   // round's score), then out entries (latest exit first).
+  // NOTE: rankCmp(game, x, y) is negative when x ranks ahead of y, so a
+  // sort comparator must pass the values in element order — rankCmp(a, b),
+  // never rankCmp(b, a) (that inverts the ranking; v1.3 shipped it
+  // inverted in every rounds sort below).
   function quickPlaySorted(game) {
     if (!qsActive(game)) return quickSorted(game);
     const qs = game.qsRounds;
     if (qs.mode === 'cumulative') {
       return game.entries.slice().sort(function (a, b) {
-        return rankCmp(game, qsRunningTotal(game, b), qsRunningTotal(game, a)) ||
-          rankCmp(game, quickScore(game, b), quickScore(game, a));
+        return rankCmp(game, qsRunningTotal(game, a), qsRunningTotal(game, b)) ||
+          rankCmp(game, quickScore(game, a), quickScore(game, b));
       });
     }
     const inn = game.entries.filter(function (e) { return !qs.outRound[e.id]; });
     const out = game.entries.filter(function (e) { return !!qs.outRound[e.id]; });
-    inn.sort(function (a, b) { return rankCmp(game, quickScore(game, b), quickScore(game, a)); });
+    inn.sort(function (a, b) { return rankCmp(game, quickScore(game, a), quickScore(game, b)); });
     out.sort(function (a, b) {
       if (qs.outRound[b.id] !== qs.outRound[a.id]) return qs.outRound[b.id] - qs.outRound[a.id];
       const ra = qs.rounds[qs.outRound[a.id] - 1], rb = qs.rounds[qs.outRound[b.id] - 1];
-      return rankCmp(game, rb ? rb.scores[b.id] : null, ra ? ra.scores[a.id] : null);
+      return rankCmp(game, ra ? ra.scores[a.id] : null, rb ? rb.scores[b.id] : null);
     });
     return inn.concat(out);
   }
@@ -842,17 +846,17 @@
     };
     if (qs.mode === 'cumulative') {
       return game.entries.slice()
-        .sort(function (a, b) { return rankCmp(game, qsRoundsTotal(game, b.id), qsRoundsTotal(game, a.id)); })
+        .sort(function (a, b) { return rankCmp(game, qsRoundsTotal(game, a.id), qsRoundsTotal(game, b.id)); })
         .map(function (e) { return row(e, qsRoundsTotal(game, e.id) + ' pts'); });
     }
     const last = recs[recs.length - 1];
     const inn = game.entries.filter(function (e) { return !qs.outRound[e.id]; });
     const out = game.entries.filter(function (e) { return !!qs.outRound[e.id]; });
-    inn.sort(function (a, b) { return rankCmp(game, last.scores[b.id], last.scores[a.id]); });
+    inn.sort(function (a, b) { return rankCmp(game, last.scores[a.id], last.scores[b.id]); });
     out.sort(function (a, b) {
       if (qs.outRound[b.id] !== qs.outRound[a.id]) return qs.outRound[b.id] - qs.outRound[a.id];
       const ra = qs.rounds[qs.outRound[a.id] - 1], rb = qs.rounds[qs.outRound[b.id] - 1];
-      return rankCmp(game, rb ? rb.scores[b.id] : null, ra ? ra.scores[a.id] : null);
+      return rankCmp(game, ra ? ra.scores[a.id] : null, rb ? rb.scores[b.id] : null);
     });
     const rows = [];
     inn.forEach(function (e) {
@@ -1102,14 +1106,14 @@
       const stillIn = game.entries.filter(function (e) { return !qs.outRound[e.id]; });
       const outNow = game.entries.filter(function (e) { return qs.outRound[e.id] === rnum; });
       const outBefore = game.entries.filter(function (e) { return qs.outRound[e.id] && qs.outRound[e.id] !== rnum; });
-      const byScore = function (a, b) { return rankCmp(game, rec.scores[b.id], rec.scores[a.id]); };
+      const byScore = function (a, b) { return rankCmp(game, rec.scores[a.id], rec.scores[b.id]); };
       stillIn.sort(byScore); outNow.sort(byScore);
       rows = stillIn.map(function (e) { return { e: e, status: 'advanced' }; })
         .concat(outNow.map(function (e) { return { e: e, status: 'out' }; }))
         .concat(outBefore.map(function (e) { return { e: e, status: 'outbefore' }; }));
     } else {
       rows = game.entries.slice()
-        .sort(function (a, b) { return rankCmp(game, qsRoundsTotal(game, b.id), qsRoundsTotal(game, a.id)); })
+        .sort(function (a, b) { return rankCmp(game, qsRoundsTotal(game, a.id), qsRoundsTotal(game, b.id)); })
         .map(function (e) { return { e: e, status: 'total' }; });
     }
     h += '<div class="card" style="padding:8px 12px"><table class="stand"><tr><th>' +
@@ -1117,7 +1121,7 @@
       (qs.mode === 'cumulative' ? '<th class="num">Total</th>' : '<th>Status</th>') + '</tr>';
     rows.forEach(function (r) {
       const s = rec.scores[r.e.id];
-      h += '<tr><td>' + entryDotHTML(game, r.e.id) + esc(r.e.name) +
+      h += '<tr' + (r.status === 'advanced' || r.status === 'total' ? '' : ' class="outrow"') + '><td>' + entryDotHTML(game, r.e.id) + esc(r.e.name) +
         (r.e.cabin ? ' <span class="sub">(cabin ' + esc(r.e.cabin) + ')</span>' : '') + '</td>' +
         '<td class="num">' + (s === null || s === undefined ? '—' : s) + '</td>';
       if (qs.mode === 'cumulative') h += '<td class="num"><b>' + qsRoundsTotal(game, r.e.id) + '</b></td>';
@@ -1664,6 +1668,20 @@
   }
 
   /* ----- History ----- */
+  // Two-step in-app delete confirm: the native confirm() dialog is
+  // suppressed in some embedded/browser contexts (the button then
+  // appears dead), so the first tap arms the button ("Confirm
+  // delete?") and only a second tap on the same button deletes. The
+  // arm resets after a few seconds, when another entry is armed, or
+  // whenever the history screen re-renders (any navigation).
+  let histDelArmId = null, histDelArmTimer = null;
+  function disarmHistDel() {
+    histDelArmId = null;
+    if (histDelArmTimer) { clearTimeout(histDelArmTimer); histDelArmTimer = null; }
+    document.querySelectorAll('[data-delhist]').forEach(function (x) {
+      x.textContent = 'Delete'; x.classList.remove('confirming');
+    });
+  }
   SCREENS.history = function () {
     const finished = S.games.filter(function (g) { return g.status === 'finished'; }).slice().reverse();
     let h = '<h1>History</h1>';
@@ -1678,16 +1696,26 @@
     return h;
   };
   BINDS.history = function () {
+    disarmHistDel(); // every fresh render of this screen starts disarmed
     document.querySelectorAll('[data-view]').forEach(function (b) {
       b.addEventListener('click', function () { go('finish', b.getAttribute('data-view')); });
     });
     document.querySelectorAll('[data-delhist]').forEach(function (b) {
       b.addEventListener('click', function () {
-        const g = getGame(b.getAttribute('data-delhist'));
-        if (!g) return;
-        if (!confirm('Delete “' + g.name + '” from history? Its scores and results will be gone.')) return;
-        S.games = S.games.filter(function (x) { return x.id !== g.id; });
-        save(); render();
+        const id = b.getAttribute('data-delhist');
+        if (histDelArmId === id) {
+          // Second tap on the armed button: really delete.
+          disarmHistDel();
+          S.games = S.games.filter(function (x) { return x.id !== id; });
+          save(); render();
+          return;
+        }
+        // First tap: arm this button only.
+        disarmHistDel();
+        histDelArmId = id;
+        b.textContent = 'Confirm delete?';
+        b.classList.add('confirming');
+        histDelArmTimer = setTimeout(disarmHistDel, 4000);
       });
     });
     document.getElementById('backBtn').addEventListener('click', function () { go('home'); });
