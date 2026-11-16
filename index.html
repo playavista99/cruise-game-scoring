@@ -15,12 +15,22 @@
   <button class="brand" id="brandBtn" aria-label="Home">
     <span class="brand-icon">🏆</span><span class="brand-name">Game Scoring</span>
   </button>
-  <button class="topbtn" id="accountBtn">Account</button>
+  <div class="topbtns">
+    <button class="topbtn" id="accountBtn">Account</button>
+    <button class="topbtn" id="menuBtn" aria-label="Menu" aria-haspopup="true" aria-expanded="false">☰</button>
+  </div>
+  <nav class="menupanel hidden" id="menuPanel" aria-label="App menu">
+    <button class="menuitem" id="menuInstallBtn" type="button"><span class="menuitem-ic" aria-hidden="true">📲</span><span>Install this app</span></button>
+    <button class="menuitem" id="menuShareBtn" type="button"><span class="menuitem-ic" aria-hidden="true">🔗</span><span>Share / QR code</span></button>
+    <a class="menuitem hidden" id="menuWhatsappBtn" href="#" target="_blank" rel="noopener"><span class="menuitem-ic" aria-hidden="true">💬</span><span>Join the WhatsApp group</span></a>
+    <button class="menuitem" id="menuFeedbackBtn" type="button"><span class="menuitem-ic" aria-hidden="true">✉️</span><span>Send feedback</span></button>
+  </nav>
 </header>
 <main id="app" class="app"></main>
 <div id="modalRoot"></div>
 <script src="config.js"></script>
 <script src="engines.js"></script>
+<script src="qr.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="app.js"></script>
 </body>
