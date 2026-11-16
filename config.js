@@ -14,5 +14,5 @@ window.APP_CONFIG = {
   /* Optional: paste a WhatsApp group invite link (https://chat.whatsapp.com/…)
      to show a "Join the WhatsApp group" entry in the ☰ menu.
      Leave empty and the entry stays hidden. */
-  WHATSAPP_GROUP_URL: ''
+  WHATSAPP_GROUP_URL: 'https://chat.whatsapp.com/GfK5zuhx2vbIYaFtvooLkz'
 };
