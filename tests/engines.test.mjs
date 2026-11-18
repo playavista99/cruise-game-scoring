@@ -179,5 +179,128 @@ for (let n = 2; n <= 12; n++) {
   ok(E.rrGamesPlayed(game)['P3'] === 1, 'standings: bye counts toward games played');
 }
 
+/* ---------- remaining-schedule rebuild (mid-game adds, v1.4) ---------- */
+{
+  const schedOf = (rounds) => {
+    const s = {};
+    rounds.forEach((r) => r.pairs.forEach((pr) => { s[pr[0]] = (s[pr[0]] || 0) + 1; s[pr[1]] = (s[pr[1]] || 0) + 1; }));
+    return s;
+  };
+  const roundsValid = (rounds, label) => {
+    rounds.forEach((r, i) => {
+      const seen = new Set();
+      r.pairs.forEach((pr) => {
+        ok(!seen.has(pr[0]) && !seen.has(pr[1]), `${label}: entry twice in rebuilt round ${i + 1}`);
+        seen.add(pr[0]); seen.add(pr[1]);
+      });
+    });
+  };
+  const unmetTotal = (u) => Object.values(u).reduce((a, b) => a + b, 0);
+
+  // T1: forbidden pairings avoided while both entries still need games.
+  {
+    const needs = { A: 2, B: 2, C: 2, D: 2 };
+    const forbidden = { 'A|B': true, 'C|D': true };
+    const out = E.buildRemainingRR(['A', 'B', 'C', 'D'], needs, forbidden, {}, 42);
+    const s = schedOf(out.rounds);
+    ok(['A', 'B', 'C', 'D'].every((id) => s[id] === 2), 'T1: every need met exactly');
+    ok(unmetTotal(out.unmet) === 0, 'T1: nothing unmet');
+    ok(!Object.keys(out.extras).length, 'T1: no extras');
+    let usedForbidden = false;
+    out.rounds.forEach((r) => r.pairs.forEach((pr) => { if (forbidden[E.pairKey(pr[0], pr[1])]) usedForbidden = true; }));
+    ok(!usedForbidden, 'T1: no forbidden pairing used');
+    roundsValid(out.rounds, 'T1');
+  }
+  // T2: odd total need — exactly one entry sits one game short.
+  {
+    const out = E.buildRemainingRR(['A', 'B', 'C'], { A: 2, B: 2, C: 1 }, {}, {}, 7);
+    ok(unmetTotal(out.unmet) === 1, 'T2: exactly one game unmet on an odd total, got ' + unmetTotal(out.unmet));
+    const s = schedOf(out.rounds);
+    const totalSched = Object.values(s).reduce((a, b) => a + b, 0);
+    ok(totalSched === 4, 'T2: two matches scheduled');
+    roundsValid(out.rounds, 'T2');
+  }
+  // T3: completed-RR late entry — fills against distinct opponents,
+  // fewest-games first, extras reported, nothing unmet.
+  {
+    const needs = { A: 0, B: 0, C: 0, D: 0, NEW: 2 };
+    const played = { A: 1, B: 1, C: 1, D: 1, NEW: 0 };
+    const forbidden = { 'A|B': true, 'C|D': true };
+    const out = E.buildRemainingRR(['A', 'B', 'C', 'D', 'NEW'], needs, forbidden, played, 9);
+    const s = schedOf(out.rounds);
+    ok(s.NEW === 2 && unmetTotal(out.unmet) === 0, 'T3: newcomer gets both games');
+    const opps = new Set();
+    out.rounds.forEach((r) => r.pairs.forEach((pr) => { if (pr[0] === 'NEW') opps.add(pr[1]); if (pr[1] === 'NEW') opps.add(pr[0]); }));
+    ok(opps.size === 2, 'T3: newcomer faces two distinct opponents');
+    ok(Object.values(out.extras).reduce((a, b) => a + b, 0) === 2, 'T3: two extra games reported');
+    roundsValid(out.rounds, 'T3');
+  }
+  // T4: fill cap — a late entry cannot exceed its distinct opponents.
+  {
+    const out = E.buildRemainingRR(['A', 'B', 'C', 'N'], { A: 0, B: 0, C: 0, N: 5 }, {}, { A: 2, B: 2, C: 2, N: 0 }, 3);
+    const s = schedOf(out.rounds);
+    ok(s.N === 3, 'T4: newcomer capped at 3 distinct opponents, got ' + s.N);
+    ok(out.unmet.N === 2, 'T4: remaining 2 reported unmet');
+  }
+  // T5: a rematch is allowed when BOTH entries still need the game.
+  {
+    const out = E.buildRemainingRR(['A', 'B'], { A: 1, B: 1 }, { 'A|B': true }, { A: 1, B: 1 }, 5);
+    ok(out.rounds.length === 1 && out.rounds[0].pairs.length === 1, 'T5: needy rematch still scheduled');
+    ok(unmetTotal(out.unmet) === 0, 'T5: nothing unmet');
+  }
+  // T6: nobody needs games -> no rounds.
+  {
+    const out = E.buildRemainingRR(['A', 'B', 'C'], { A: 0, B: 0, C: 0 }, {}, {}, 5);
+    ok(out.rounds.length === 0, 'T6: empty schedule when no needs');
+  }
+  // T7: sweep over schedule-derived states (preset schedule, first k
+  // matches "played", then a walk-up joins). Invariants: nobody is
+  // scheduled past their need without an extras entry to explain it,
+  // nobody falls short by more than the forced parity game, rounds
+  // are valid matchings.
+  for (let n = 3; n <= 9; n++) {
+    for (let g = 1; g <= 4; g++) {
+      for (const k of [0, 1, 3]) {
+        const es = ids(n);
+        const built = E.buildPresetRR(es, g);
+        if (k > built.matches.length) continue;
+        const played = {}, forbidden = {};
+        es.forEach((id) => { played[id] = 0; });
+        built.matches.slice(0, k).forEach((m) => {
+          played[m.aId]++; played[m.bId]++;
+          forbidden[E.pairKey(m.aId, m.bId)] = true;
+        });
+        const all = es.concat(['NEW']);
+        const needs = {};
+        all.forEach((id) => { needs[id] = id === 'NEW' ? g : Math.max(0, g - played[id]); });
+        const out = E.buildRemainingRR(all, needs, forbidden, played, 100 + n * 10 + g);
+        const s = schedOf(out.rounds);
+        all.forEach((id) => {
+          const got = s[id] || 0;
+          ok(got <= needs[id] + (out.extras[id] || 0), `T7 n=${n} g=${g} k=${k}: ${id} overscheduled (${got} > need ${needs[id]})`);
+          ok(got + (out.unmet[id] || 0) >= needs[id] - 1, `T7 n=${n} g=${g} k=${k}: ${id} short by more than the parity game`);
+          ok(got - needs[id] === (out.extras[id] || 0) || got <= needs[id], `T7 n=${n} g=${g} k=${k}: ${id} extras bookkeeping`);
+        });
+        roundsValid(out.rounds, `T7 n=${n} g=${g} k=${k}`);
+      }
+    }
+  }
+  // T8: results-based — a lone active entry (walk-up in a finished
+  // pool) is paired against a real opponent, never handed a bye.
+  {
+    const es = entries(4);
+    const game = E.createResultsBasedRR(es, 1);
+    game.matches.slice().forEach((m) => E.scoreRRMatch(game, DEF, m.id, 3, 1));
+    ok(E.rrComplete(game), 'T8: pool complete before the walk-up');
+    game.entries.push({ id: 'P5', name: 'P5' });
+    const rn = E.generateNextRRRound(game, DEF);
+    ok(rn === 2, 'T8: a new round is generated for the walk-up');
+    const nm = game.matches.find((m) => m.round === 2);
+    ok(nm && (nm.aId === 'P5' || nm.bId === 'P5'), 'T8: walk-up is in the new match');
+    ok(nm && nm.aId !== nm.bId && (nm.aId === 'P1' || nm.bId === 'P1'), 'T8: opponent is the fewest-games / first-signed-up entry (P1)');
+    ok(!game.rrByes.includes('P5'), 'T8: walk-up was not given a bye');
+  }
+}
+
 console.log(`\n${checks} checks, ${failures} failures`);
 process.exit(failures ? 1 : 0);
