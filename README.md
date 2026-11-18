@@ -140,7 +140,14 @@ plus Share / Copy link) · *Join the WhatsApp group* (only shown when
 `WHATSAPP_GROUP_URL` is set in `config.js`) · *Send feedback*. The
 same feedback form is also behind the **Send feedback** button at the
 bottom of the home page. Feedback is written to the Supabase
-`feedback` table (insert-only — see below).
+`feedback` table (insert-only — see below). The menu's **App
+version** section shows the running version, checks the published
+`version.json` automatically whenever the menu opens (and on demand
+via *Check for updates*), and — when a newer version is published —
+shows an **⬆ Update now** button that activates any waiting service
+worker, clears the offline shell caches, and reloads into the new
+build. A failed check (normal on ship Wi-Fi) simply says it can't
+check right now.
 
 ## Files
 
@@ -150,10 +157,25 @@ bottom of the home page. Feedback is written to the Supabase
 | `engines.js` | Tournament engines (brackets, round robin, Swiss pairing, standings) — shared by the page and the tests |
 | `qr.js` | QR Code Generator for JavaScript (Kazuhiko Arase, MIT) — draws the share QR code on-device, works offline |
 | `config.js` | Supabase URL + anon key for the optional account (blank = accounts off), plus `WHATSAPP_GROUP_URL` for the menu's WhatsApp entry (blank = entry hidden) |
+| `version.json` | Published version marker, fetched by the menu's update check |
 | `sw.js`, `manifest.webmanifest`, `icon.svg` | Offline shell / installable PWA bits |
 | `supabase/schema.sql` | One-time database setup for the optional account |
 | `tests/engines.test.mjs` | Engine verification: `node tests/engines.test.mjs` |
-| `tests/quick-rounds.test.mjs`, `tests/rr-adds.test.mjs`, `tests/edit-players.test.mjs`, `tests/playoff-field.test.mjs`, `tests/winner-flow.test.mjs`, `tests/setup-features.test.mjs`, `tests/cruises.test.mjs` | End-to-end DOM tests (jsdom) driving the shipped app: `node tests/<name>.test.mjs` |
+| `tests/quick-rounds.test.mjs`, `tests/rr-adds.test.mjs`, `tests/edit-players.test.mjs`, `tests/playoff-field.test.mjs`, `tests/winner-flow.test.mjs`, `tests/setup-features.test.mjs`, `tests/cruises.test.mjs`, `tests/update-check.test.mjs` | End-to-end DOM tests (jsdom) driving the shipped app: `node tests/<name>.test.mjs` |
+
+## Release checklist
+
+Every release bumps **four things together** — if any one is left
+behind, the update check and the offline shell disagree about what
+"current" means:
+
+1. `APP_VERSION` in `app.js` (the code's single source of truth).
+2. The `version` value in `version.json` (what the menu's update
+   check fetches).
+3. The menu fallback version line in `index.html` (what shows before
+   JavaScript runs; the app rewrites it from `APP_VERSION` on load).
+4. The service-worker cache name in `sw.js` (`cgsa-shell-vNN`, one
+   higher than the previous release).
 
 ## Hosting (GitHub Pages)
 
