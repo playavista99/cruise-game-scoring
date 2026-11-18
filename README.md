@@ -12,7 +12,8 @@ playoff bracket seeded from the final standings).
 **Games:** Soccer Shootout, Hole-in-One Golf, Bean Bag Toss, Pop Darts,
 Axe Throw, Shuffleboard, Mini Golf — every scoring rule editable at
 setup and mid-game — plus a custom game builder with export/import
-codes so a whole activity team can run identical setups.
+codes so a whole activity team can run identical setups, and
+**Closest Wins**, scored by camera-measured distance (below).
 
 **Quick Score rounds:** Quick Score games can optionally play in
 rounds (set at setup; brackets and round robins are unaffected). Two
@@ -197,19 +198,53 @@ to be finished or kept); a cruise's roster and all finished games
 are untouched, and the list section disappears when its last
 in-progress game is deleted.
 
+**Camera measurement (v2.2).** The app can measure real distances
+from a photo. Photograph the flat surface where things landed with
+a known-size rectangle in the shot, tap the rectangle's 4 corners
+to calibrate (a perspective transform — a homography solved in
+`engines.js` — undoes the camera angle), then tap any two points
+on that surface to read the real distance between them. Reference
+presets: a **cornhole board (24″ × 48″)**, a **credit card
+(3.37″ × 2.125″)** and **US Letter paper (8.5″ × 11″)**, plus a
+custom size. Markers can be dragged to fine-tune a tap, and if the
+rectangle was photographed the other way round (a board shot from
+its side) the app notices and swaps its width and height. Two
+honest limits: both measured points must lie on the **same flat
+plane** as the calibration rectangle, and accuracy depends on
+careful corner taps — expect about **half an inch** in practice,
+not survey-grade precision. The photo lives only in memory while
+you measure: it is **never saved** (not to localStorage, not to the
+cloud), and leaving the screen discards it. Only numbers persist.
+
+It ships in two places. The **📏 Camera measure** button on the
+home screen is a free pocket tape measure: as many point-to-point
+measurements as you like on one photo, readouts in feet/inches or
+centimetres, nothing kept. And **Closest Wins** is a built-in
+Quick Score game scored by distance: on its play screen, *Measure
+from a photo* opens the same screen in contest mode — calibrate
+once, tap the target, then tap each ball and say whose it is;
+*Save distances* writes each entry's distance (inches, 0.1
+precision) as their score, and from there the game behaves exactly
+like any other Quick Score game — the lowest distance wins. Each row
+also has a *Type…* button to enter a distance by hand (feet +
+inches) when a photo isn't practical, and Finish stays locked
+until at least one distance exists. Closest Wins is Quick
+Score-only by design: its setup locks the format, hides the
+rounds option, and has no scoring-buttons editor.
+
 ## Files
 
 | File | What it is |
 |---|---|
 | `index.html`, `styles.css`, `app.js` | The app |
-| `engines.js` | Tournament engines (brackets, round robin, Swiss pairing, standings) — shared by the page and the tests |
+| `engines.js` | Tournament engines (brackets, round robin, Swiss pairing, standings) plus the camera-measurement homography — shared by the page and the tests |
 | `qr.js` | QR Code Generator for JavaScript (Kazuhiko Arase, MIT) — draws the share QR code on-device, works offline |
 | `config.js` | Supabase URL + anon key for the optional account (blank = accounts off), plus `WHATSAPP_GROUP_URL` for the menu's WhatsApp entry (blank = entry hidden) |
 | `version.json` | Published version marker, fetched by the menu's update check |
 | `sw.js`, `manifest.webmanifest`, `icon.svg` | Offline shell / installable PWA bits |
 | `supabase/schema.sql` | One-time database setup for the optional account |
 | `tests/engines.test.mjs` | Engine verification: `node tests/engines.test.mjs` |
-| `tests/quick-rounds.test.mjs`, `tests/rr-adds.test.mjs`, `tests/edit-players.test.mjs`, `tests/playoff-field.test.mjs`, `tests/winner-flow.test.mjs`, `tests/setup-features.test.mjs`, `tests/cruises.test.mjs`, `tests/update-check.test.mjs`, `tests/home-flow.test.mjs`, `tests/signup-hint.test.mjs`, `tests/nav.test.mjs`, `tests/version-guard.test.mjs`, `tests/inprogress-delete.test.mjs` | End-to-end DOM tests (jsdom) driving the shipped app: `node tests/<name>.test.mjs` |
+| `tests/quick-rounds.test.mjs`, `tests/rr-adds.test.mjs`, `tests/edit-players.test.mjs`, `tests/playoff-field.test.mjs`, `tests/winner-flow.test.mjs`, `tests/setup-features.test.mjs`, `tests/cruises.test.mjs`, `tests/update-check.test.mjs`, `tests/home-flow.test.mjs`, `tests/signup-hint.test.mjs`, `tests/nav.test.mjs`, `tests/version-guard.test.mjs`, `tests/inprogress-delete.test.mjs`, `tests/measure.test.mjs` | End-to-end DOM tests (jsdom) driving the shipped app: `node tests/<name>.test.mjs` |
 
 ## Release checklist
 
