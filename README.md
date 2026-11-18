@@ -187,6 +187,16 @@ reload is safe for the same reason reopening the app is: all games,
 drafts and settings are written to localStorage as they change, so
 nothing in progress is lost.
 
+**Deleting an in-progress game (v2.1.2).** Every in-progress card —
+on the home screen's *In progress* list and on a cruise page's game
+list — has a *Delete* button next to *Continue*, using the same
+two-step in-app confirm as History delete: the first tap arms
+*Confirm delete?* for ~4 seconds, the second tap removes the game.
+It deletes only that game (a mistakenly started game no longer has
+to be finished or kept); a cruise's roster and all finished games
+are untouched, and the list section disappears when its last
+in-progress game is deleted.
+
 ## Files
 
 | File | What it is |
@@ -199,7 +209,7 @@ nothing in progress is lost.
 | `sw.js`, `manifest.webmanifest`, `icon.svg` | Offline shell / installable PWA bits |
 | `supabase/schema.sql` | One-time database setup for the optional account |
 | `tests/engines.test.mjs` | Engine verification: `node tests/engines.test.mjs` |
-| `tests/quick-rounds.test.mjs`, `tests/rr-adds.test.mjs`, `tests/edit-players.test.mjs`, `tests/playoff-field.test.mjs`, `tests/winner-flow.test.mjs`, `tests/setup-features.test.mjs`, `tests/cruises.test.mjs`, `tests/update-check.test.mjs`, `tests/home-flow.test.mjs`, `tests/signup-hint.test.mjs`, `tests/nav.test.mjs`, `tests/version-guard.test.mjs` | End-to-end DOM tests (jsdom) driving the shipped app: `node tests/<name>.test.mjs` |
+| `tests/quick-rounds.test.mjs`, `tests/rr-adds.test.mjs`, `tests/edit-players.test.mjs`, `tests/playoff-field.test.mjs`, `tests/winner-flow.test.mjs`, `tests/setup-features.test.mjs`, `tests/cruises.test.mjs`, `tests/update-check.test.mjs`, `tests/home-flow.test.mjs`, `tests/signup-hint.test.mjs`, `tests/nav.test.mjs`, `tests/version-guard.test.mjs`, `tests/inprogress-delete.test.mjs` | End-to-end DOM tests (jsdom) driving the shipped app: `node tests/<name>.test.mjs` |
 
 ## Release checklist
 
