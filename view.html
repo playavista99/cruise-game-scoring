@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Live standings — Cruise Game Scoring</title>
+<meta name="description" content="Live standings for a game being scored with the Cruise Game Scoring app. First names only.">
+<meta name="theme-color" content="#0b3b5e">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<style>
+  /* Standalone by design: this page is opened by players on their own
+     phones, so it carries its own styles and script — it never loads
+     the staff app (app.js / styles.css) or touches its data. */
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: #f2f6fa; color: #12212e;
+  }
+  .topbar {
+    background: #0b3b5e; color: #fff; padding: 14px 16px; text-align: center;
+  }
+  .topbar .brand { font-size: 17px; font-weight: 700; }
+  .wrap { max-width: 640px; margin: 0 auto; padding: 14px 12px 40px; }
+  h1 { font-size: 24px; margin: 6px 0 4px; overflow-wrap: anywhere; }
+  h2 { font-size: 18px; margin: 22px 0 8px; }
+  .sub { color: #4a6072; font-size: 14px; line-height: 1.45; }
+  .livebar {
+    display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 15px;
+    color: #14532d; margin: 8px 0 2px;
+  }
+  .livedot {
+    width: 11px; height: 11px; border-radius: 50%; background: #16a34a; flex: 0 0 auto;
+    animation: pulse 1.6s ease-in-out infinite;
+  }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+  .livebar.final { color: #0b3b5e; }
+  .winnerbanner {
+    background: linear-gradient(135deg, #0b3b5e, #0b6fa4); color: #fff;
+    border-radius: 16px; padding: 20px 16px; text-align: center; margin: 12px 0;
+  }
+  .winnerbanner .crown { font-size: 40px; }
+  .winnerbanner .wname { font-size: 24px; font-weight: 800; overflow-wrap: anywhere; margin-top: 4px; }
+  .card {
+    background: #fff; border-radius: 14px; padding: 8px 14px; margin: 10px 0;
+    box-shadow: 0 1px 3px rgba(11, 59, 94, 0.13);
+  }
+  .srow {
+    display: flex; align-items: center; gap: 9px; padding: 9px 0;
+    border-bottom: 1px solid #e2ebf2;
+  }
+  .srow:last-child { border-bottom: 0; }
+  .srow .rank { font-weight: 800; color: #0b3b5e; min-width: 26px; text-align: right; flex: 0 0 auto; }
+  .srow .nm { flex: 1 1 auto; min-width: 0; font-weight: 600; overflow-wrap: anywhere; }
+  .srow .sc { font-weight: 700; color: #0b3b5e; text-align: right; flex: 0 0 auto; }
+  .srow .nt { display: block; font-weight: 600; color: #b3261e; font-size: 12.5px; }
+  .colordot {
+    display: inline-block; width: 12px; height: 12px; border-radius: 50%;
+    border: 1.5px solid rgba(18, 33, 46, 0.33); flex: 0 0 auto;
+  }
+  .mrow {
+    display: flex; align-items: center; gap: 8px; padding: 10px 0;
+    border-bottom: 1px solid #e2ebf2;
+  }
+  .mrow:last-child { border-bottom: 0; }
+  .mrow .side { flex: 1 1 0; min-width: 0; font-weight: 600; overflow-wrap: anywhere; }
+  .mrow .side.b { text-align: right; }
+  .mrow .mid { flex: 0 0 auto; text-align: center; min-width: 58px; }
+  .mrow .mid .score { font-weight: 800; font-size: 17px; color: #0b3b5e; }
+  .mrow .mid .status { display: block; font-size: 12px; font-weight: 700; color: #4a6072; }
+  .mrow .vs { color: #4a6072; font-weight: 700; }
+  .empty {
+    text-align: center; color: #4a6072; padding: 34px 16px; line-height: 1.55; font-size: 16px;
+  }
+  .empty .big { font-size: 42px; display: block; margin-bottom: 10px; }
+  .foot { text-align: center; color: #4a6072; font-size: 13.5px; margin-top: 26px; }
+  .foot a { color: #0b6fa4; font-weight: 600; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<header class="topbar"><div class="brand">🏆 Game Scoring — Player View</div></header>
+<main class="wrap">
+  <div id="unavailable" class="empty hidden">
+    <span class="big">📡</span>
+    <span id="unavailableText">This player view isn’t available — it may have ended or the link may be incomplete.</span>
+  </div>
+  <div id="content" class="hidden">
+    <h1 id="gameTitle"></h1>
+    <div class="sub" id="gameMeta"></div>
+    <div class="livebar" id="liveBar"><span class="livedot" id="liveDot"></span><span id="liveText"></span></div>
+    <div class="winnerbanner hidden" id="winnerBanner">
+      <div class="crown">🏆</div>
+      <div class="wname" id="winnerText"></div>
+    </div>
+    <section id="standingsSection" class="hidden">
+      <h2>Standings</h2>
+      <div class="card" id="standingsCard"></div>
+    </section>
+    <section id="currentSection" class="hidden">
+      <h2 id="currentLabel">Now playing</h2>
+      <div class="card" id="currentCard"></div>
+      <p class="sub" id="currentNote"></p>
+    </section>
+    <section id="upNextSection" class="hidden">
+      <h2 id="upNextLabel">Up next</h2>
+      <div class="card" id="upNextCard"></div>
+      <p class="sub" id="upNextNote"></p>
+    </section>
+  </div>
+  <p class="foot">Scored with the <a href="./">Cruise Game Scoring</a> app · First names only — no cabin numbers, ever.</p>
+</main>
+<script>
+(function () {
+  /* Reads go through the get_shared_view() database function (exact
+     code, unexpired only) — the shared_views table itself has no
+     direct read access. The URL + publishable key below are the
+     app's public config, the same values shipped in config.js. */
+  var SB_URL = 'https://zwvtupimuzlvghwikvqr.supabase.co';
+  var SB_KEY = 'sb_publishable_-TLl7C0z8K6mx5K0TNawrw_FQoevBWv';
+  var code = '';
+  try { code = new URLSearchParams(window.location.search).get('c') || ''; } catch (e) { code = ''; }
+
+  var el = function (id) { return document.getElementById(id); };
+  var havePayload = false;
+
+  function showUnavailable(msg) {
+    if (msg) el('unavailableText').textContent = msg;
+    el('unavailable').classList.remove('hidden');
+    el('content').classList.add('hidden');
+  }
+  function dot(hex) {
+    if (!hex || !/^#[0-9a-fA-F]{3,8}$/.test(hex)) return null;
+    var s = document.createElement('span');
+    s.className = 'colordot';
+    s.style.background = hex;
+    s.setAttribute('aria-hidden', 'true');
+    return s;
+  }
+  function standingsRow(row, i) {
+    var d = document.createElement('div');
+    d.className = 'srow';
+    var rank = document.createElement('span');
+    rank.className = 'rank';
+    rank.textContent = (i + 1) + '.';
+    d.appendChild(rank);
+    var c = dot(row.colorHex);
+    if (c) d.appendChild(c);
+    var nm = document.createElement('span');
+    nm.className = 'nm';
+    nm.textContent = row.name || '—';
+    if (row.note) {
+      var nt = document.createElement('span');
+      nt.className = 'nt';
+      nt.textContent = row.note;
+      nm.appendChild(nt);
+    }
+    d.appendChild(nm);
+    var sc = document.createElement('span');
+    sc.className = 'sc';
+    sc.textContent = row.scoreText || '';
+    d.appendChild(sc);
+    return d;
+  }
+  function matchRow(row) {
+    var d = document.createElement('div');
+    d.className = 'mrow';
+    var a = document.createElement('span');
+    a.className = 'side';
+    a.textContent = row.aName || '—';
+    var mid = document.createElement('span');
+    mid.className = 'mid';
+    if (row.scoreText) {
+      var sc = document.createElement('span');
+      sc.className = 'score';
+      sc.textContent = row.scoreText;
+      mid.appendChild(sc);
+    } else {
+      var vs = document.createElement('span');
+      vs.className = 'vs';
+      vs.textContent = 'vs';
+      mid.appendChild(vs);
+    }
+    if (row.status) {
+      var st = document.createElement('span');
+      st.className = 'status';
+      st.textContent = row.status;
+      mid.appendChild(st);
+    }
+    var b = document.createElement('span');
+    b.className = 'side b';
+    b.textContent = row.bName || '—';
+    d.appendChild(a); d.appendChild(mid); d.appendChild(b);
+    return d;
+  }
+  function entryRow(row) {
+    var d = document.createElement('div');
+    d.className = 'srow';
+    var c = dot(row.colorHex);
+    if (c) d.appendChild(c);
+    var nm = document.createElement('span');
+    nm.className = 'nm';
+    nm.textContent = row.name || '—';
+    if (row.note) {
+      var nt = document.createElement('span');
+      nt.className = 'nt';
+      nt.textContent = row.note;
+      nm.appendChild(nt);
+    }
+    d.appendChild(nm);
+    var sc = document.createElement('span');
+    sc.className = 'sc';
+    sc.textContent = row.scoreText || '';
+    d.appendChild(sc);
+    return d;
+  }
+  function fillSection(sectionId, labelId, cardId, noteId, section, fallbackLabel) {
+    var sec = el(sectionId);
+    if (!section || (!section.rows || !section.rows.length) && !section.note) {
+      sec.classList.add('hidden');
+      return;
+    }
+    sec.classList.remove('hidden');
+    el(labelId).textContent = section.label || fallbackLabel;
+    var card = el(cardId);
+    card.innerHTML = '';
+    (section.rows || []).forEach(function (row) {
+      card.appendChild(row && row.aName !== undefined ? matchRow(row) : entryRow(row));
+    });
+    card.classList.toggle('hidden', !(section.rows && section.rows.length));
+    var note = el(noteId);
+    note.textContent = section.note || '';
+    note.classList.toggle('hidden', !section.note);
+  }
+  function render(p) {
+    havePayload = true;
+    el('unavailable').classList.add('hidden');
+    el('content').classList.remove('hidden');
+    el('gameTitle').textContent = p.title || 'Game';
+    var meta = [];
+    if (p.cruise) meta.push('🛳 ' + p.cruise);
+    if (p.format) meta.push(p.format);
+    el('gameMeta').textContent = meta.join(' · ');
+    var finished = p.status === 'finished';
+    el('liveBar').classList.toggle('final', finished);
+    el('liveDot').classList.toggle('hidden', finished);
+    el('liveText').textContent = finished
+      ? 'Final · Updated ' + (p.updatedTime || '')
+      : 'LIVE · Updated ' + (p.updatedTime || '');
+    var wb = el('winnerBanner');
+    if (finished && p.winner) {
+      wb.classList.remove('hidden');
+      el('winnerText').textContent = p.winner;
+    } else {
+      wb.classList.add('hidden');
+    }
+    var st = el('standingsSection');
+    if (p.standings && p.standings.length) {
+      st.classList.remove('hidden');
+      var card = el('standingsCard');
+      card.innerHTML = '';
+      p.standings.forEach(function (row, i) { card.appendChild(standingsRow(row, i)); });
+    } else {
+      st.classList.add('hidden');
+    }
+    fillSection('currentSection', 'currentLabel', 'currentCard', 'currentNote', p.current, 'Now playing');
+    fillSection('upNextSection', 'upNextLabel', 'upNextCard', 'upNextNote', p.upNext, 'Up next');
+  }
+  function load() {
+    if (!code) { showUnavailable(); return; }
+    var headers = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + SB_KEY };
+    headers['api' + 'key'] = SB_KEY;
+    fetch(SB_URL + '/rest/v1/rpc/get_shared_view', {
+      method: 'POST',
+      headers: headers,
+      body: JSON.stringify({ p_code: code })
+    }).then(function (res) {
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      return res.json();
+    }).then(function (data) {
+      if (!data || typeof data !== 'object') {
+        showUnavailable();
+        return;
+      }
+      render(data);
+    }).catch(function () {
+      /* Keep showing the last good payload on a transient failure;
+         only a first-load failure gets a message. */
+      if (!havePayload) showUnavailable('Couldn’t load this view — check your connection, and it will keep retrying on its own.');
+    });
+  }
+  load();
+  setInterval(load, 20000);
+  document.addEventListener('visibilitychange', function () {
+    if (!document.hidden) load();
+  });
+})();
+</script>
+</body>
+</html>
