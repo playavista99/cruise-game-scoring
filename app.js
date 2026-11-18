@@ -12,7 +12,7 @@
      line in index.html, the <meta name="app-version"> tag in
      index.html, and the service-worker cache name are bumped
      alongside it on every release — see the README release checklist. */
-  const APP_VERSION = '2.2';
+  const APP_VERSION = '2.3';
   const UPDATE_FLAG_KEY = 'cgsa-just-updated';
   function parseVersion(v) {
     return String(v === null || v === undefined ? '' : v).trim().replace(/^v/i, '').split('.').map(function (part) {
@@ -73,7 +73,13 @@
   if (!Array.isArray(S.games)) S.games = [];
   if (!Array.isArray(S.setups)) S.setups = [];
   if (!Array.isArray(S.cruises)) S.cruises = [];
-  function save() { try { localStorage.setItem(LS_KEY, JSON.stringify(S)); } catch (e) { /* storage full/blocked */ } }
+  function save() {
+    try { localStorage.setItem(LS_KEY, JSON.stringify(S)); } catch (e) { /* storage full/blocked */ }
+    /* Live player view (v2.3): any persisted change to a game that is
+       being shared re-publishes its view (debounced, fire-and-forget —
+       a failed push never blocks or errors scoring). */
+    scheduleSharePushes();
+  }
 
   function allTemplates() { return BUILTINS.concat(S.templates); }
   function getTemplate(id) { return allTemplates().find(function (t) { return t.id === id; }) || null; }
@@ -260,6 +266,8 @@
   let pendingCruiseId = null; // cruise a new-game flow was started from; consumed by startDraft
   let pickReturn = null;     // where the pick screen's Back goes: {screen:'home'|'gamedest'} or {screen:'cruise', id}
   let openScorer = null;    // {gameId, matchId, tapsA:[], tapsB:[]}
+  const shareTimers = {};   // live player view: gameId -> debounce timer id
+  const shareStatus = {};   // live player view: gameId -> { ok, at } of the last push (memory only)
   function go(name, arg) {
     screen = { name: name, arg: arg };
     openScorer = null;
@@ -1612,6 +1620,7 @@
       '<button class="btn block" id="finishBtn"' + (canFinish(game) ? '' : ' disabled') + '>Finish game</button>' +
       (canFinish(game) ? '' : '<p class="note" style="text-align:center">Finish unlocks when the game has a winner.</p>') +
       '<button class="btn ghost block" id="homeBtn">Save & back to home</button>' +
+      '<button class="btn secondary block" id="playerViewBtn">👥 Player view</button>' +
       '<button class="btn danger block" id="deleteGameBtn">Delete this game</button>';
     return h;
   };
@@ -1622,6 +1631,7 @@
     document.getElementById('gameSettingsBtn').addEventListener('click', function () { showGameSettings(game); });
     document.getElementById('editPlayersBtn').addEventListener('click', function () { showEditPlayers(game); });
     document.getElementById('homeBtn').addEventListener('click', function () { go('home'); });
+    document.getElementById('playerViewBtn').addEventListener('click', function () { openPlayerView(game); });
     document.getElementById('deleteGameBtn').addEventListener('click', function () {
       if (!confirm('Delete this game and its scores?')) return;
       S.games = S.games.filter(function (g) { return g.id !== game.id; });
@@ -3340,6 +3350,431 @@
     });
   }
 
+  /* ----- Live player view (v2.3) -----
+     The ONE approved exception to the app's on-device rule (the
+     user's explicit call, for this feature only): when staff share
+     a game, the app publishes a view-only snapshot of it to the
+     Supabase `shared_views` table under an unguessable 12-character
+     code, and players open view.html?c=<code> to watch standings,
+     the current game and what's up next (auto-refreshing). It needs
+     an internet connection; scoring never does, and a failed push
+     never blocks or errors the scoring UI.
+
+     PRIVACY (hard rules): the payload is built ONLY by
+     buildPlayerView below, and every name in it is sanitized —
+     individuals publish as their FIRST NAME ONLY (first
+     whitespace-delimited word), teams publish their team name
+     as-is and NEVER their member names, and cabin numbers are
+     never read by the builder at all. All display strings are
+     pre-formatted here so view.html stays a dumb renderer. */
+  function viewFirstName(name) {
+    const parts = String(name === null || name === undefined ? '' : name).trim().split(/\s+/);
+    return parts[0] || '—';
+  }
+  function viewEntryName(game, e) {
+    if (!e) return '—';
+    return game.entryKind === 'teams' ? String(e.name || '—') : viewFirstName(e.name);
+  }
+  function viewNameById(game, id) {
+    const e = game.entries.find(function (x) { return x.id === id; });
+    return e ? viewEntryName(game, e) : '—';
+  }
+  function colorHexByName(name) {
+    const c = name ? colorByName(name) : null;
+    return c ? c.hex : '';
+  }
+  function viewEntryRow(game, e, scoreText, note) {
+    const c = e ? entryColorInGame(game, e) : null;
+    return {
+      name: viewEntryName(game, e),
+      colorName: c ? c.name : '', colorHex: c ? c.hex : '',
+      scoreText: scoreText, note: note || ''
+    };
+  }
+  /* Sanitized mirror of sideName(): decided feeders show the actual
+     (sanitized) name right away; undecided ones keep the friendly
+     "Winner of Semifinal 1" label — stage names carry no player
+     names, so feeder labels are safe to publish as-is. */
+  function viewSideName(game, matches, m, side) {
+    const id = side === 'a' ? m.aId : m.bId;
+    if (id) return viewNameById(game, id);
+    const src = side === 'a' ? m.srcA : m.srcB;
+    if (src && (src.t === 'win' || src.t === 'lose')) {
+      const known = feederKnownId(matches, src);
+      if (known) return viewNameById(game, known);
+      const srcMatch = matches.find(function (x) { return x.id === src.m; });
+      if (!srcMatch) return 'TBD';
+      return (src.t === 'win' ? 'Winner of ' : 'Loser of ') + matchStageName(game, matches, srcMatch);
+    }
+    return 'TBD';
+  }
+  function viewMatchRow(game, matches, m) {
+    return {
+      aName: viewSideName(game, matches, m, 'a'),
+      bName: viewSideName(game, matches, m, 'b'),
+      scoreText: (m.scored && !m.autoBye) ? (m.sa + ' – ' + m.sb) : '',
+      status: m.autoBye ? 'Bye' : (m.scored ? 'Final' : '')
+    };
+  }
+  /* Current + up-next sections for a bracket (standalone or an RR
+     playoff). Current = the earliest round with a match that can be
+     scored right now (or, between rounds, the latest round with a
+     result); up next = the unscored fixtures after it, feeder
+     labels included, capped so the payload stays small. */
+  function bracketViewSections(game, matches, prefix) {
+    const groups = [], byKey = {};
+    matches.forEach(function (m) {
+      const key = m.stage + ':' + m.round;
+      if (!byKey[key]) { byKey[key] = { stage: m.stage, round: m.round, matches: [] }; groups.push(byKey[key]); }
+      byKey[key].matches.push(m);
+    });
+    const groupLabel = function (g) {
+      let total = 0;
+      groups.forEach(function (x) { if (x.stage === g.stage && x.round > total) total = x.round; });
+      const p = g.stage === 'wb' ? 'Winners ' : (g.stage === 'lb' ? 'Losers ' : '');
+      return (prefix ? prefix + ' · ' : '') + p + roundName(g.stage, g.round, total);
+    };
+    let curIdx = -1;
+    for (let i = 0; i < groups.length; i++) {
+      if (groups[i].matches.some(function (m) { return !m.scored && !m.autoBye && m.aId && m.bId; })) { curIdx = i; break; }
+    }
+    if (curIdx < 0) {
+      for (let i = groups.length - 1; i >= 0; i--) {
+        if (groups[i].matches.some(function (m) { return m.scored; })) { curIdx = i; break; }
+      }
+    }
+    let current = null;
+    if (curIdx >= 0) {
+      current = {
+        label: groupLabel(groups[curIdx]), note: '',
+        rows: groups[curIdx].matches.filter(function (m) { return !m.autoBye; })
+          .map(function (m) { return viewMatchRow(game, matches, m); })
+      };
+    }
+    const upRows = [];
+    if (curIdx >= 0) {
+      for (let i = curIdx + 1; i < groups.length && upRows.length < 8; i++) {
+        groups[i].matches.forEach(function (m) {
+          if (!m.scored && !m.autoBye && upRows.length < 8) upRows.push(viewMatchRow(game, matches, m));
+        });
+      }
+    }
+    return { current: current, upNext: upRows.length ? { label: 'Up next', note: '', rows: upRows } : null };
+  }
+  function buildPlayerView(game) {
+    const now = new Date();
+    const payload = {
+      v: 1,
+      title: displayName(game),
+      format: formatLabel(game),
+      cruise: null,
+      status: game.status,
+      updatedAt: now.toISOString(),
+      updatedTime: now.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }),
+      winner: null,
+      standings: [],
+      current: null,
+      upNext: null
+    };
+    const cruise = getCruise(game.cruiseId);
+    if (cruise) payload.cruise = cruise.name;
+    if (game.status === 'finished') {
+      const wIds = (game.winnerIds && game.winnerIds.length) ? game.winnerIds
+        : (game.winnerId ? [game.winnerId] : []);
+      if (wIds.length) {
+        payload.winner = '🏆 ' + (wIds.length > 1 ? 'Winners: ' : 'Winner: ') +
+          wIds.map(function (id) { return viewNameById(game, id); }).join(', ');
+      }
+      payload.standings = finalStandings(game).map(function (r) {
+        const e = game.entries.find(function (x) { return x.id === r.id; });
+        return {
+          name: viewEntryName(game, e),
+          colorName: r.color || '', colorHex: colorHexByName(r.color),
+          scoreText: r.line || '', note: ''
+        };
+      });
+      return payload;
+    }
+    if (game.format === 'quick') {
+      payload.standings = quickPlaySorted(game).map(function (e) {
+        let scoreText, note = '';
+        if (qsActive(game)) {
+          const qs = game.qsRounds;
+          if (qs.mode === 'cumulative') {
+            scoreText = qsRunningTotal(game, e) + ' pts';
+          } else {
+            const sc = quickScore(game, e);
+            scoreText = sc === null ? '—' : sc + ' pts';
+            if (qs.outRound[e.id]) note = 'Out · Round ' + qs.outRound[e.id];
+          }
+        } else {
+          const sc = quickScore(game, e);
+          scoreText = sc === null ? '—' : (game.scoreMode === 'measure' ? fmtDist(sc) : sc + ' pts');
+        }
+        return viewEntryRow(game, e, scoreText, note);
+      });
+      if (qsActive(game)) {
+        const qs = game.qsRounds;
+        const target = qsCurrentTarget(game);
+        if (qs.betweenRounds && qs.rounds.length) {
+          const rec = qs.rounds[qs.rounds.length - 1];
+          payload.current = {
+            label: 'Round ' + qs.rounds.length + ' results', note: '',
+            rows: game.entries.map(function (e) {
+              const s = rec.scores[e.id];
+              return viewEntryRow(game, e, s === null || s === undefined ? '—' : s + ' pts',
+                qs.outRound[e.id] ? 'Out · Round ' + qs.outRound[e.id] : '');
+            })
+          };
+        } else {
+          payload.current = {
+            label: 'Round ' + qs.current +
+              (target !== null && target !== undefined ? ' · Target ' + target + ' pts' : ''),
+            note: qs.mode === 'advance' ? 'Reach the target to stay in' : 'Scores add up across rounds',
+            rows: game.entries.filter(function (e) { return !qs.outRound[e.id]; }).map(function (e) {
+              const sc = quickScore(game, e);
+              return viewEntryRow(game, e, sc === null ? '—' : sc + ' pts', '');
+            })
+          };
+        }
+      }
+      return payload;
+    }
+    if (game.format === 'rr') {
+      const st = E.computeStandings(game.entries, game.matches, game.def);
+      payload.standings = st.map(function (r) {
+        const e = game.entries.find(function (x) { return x.id === r.id; });
+        const row = viewEntryRow(game, e,
+          r.w + 'W–' + r.l + 'L' + (r.d ? '–' + r.d + 'D' : '') + ' · ' + r.pf + ' pts · ' +
+          (r.diff > 0 ? '+' : '') + r.diff, '');
+        row.w = r.w; row.l = r.l; row.d = r.d; row.played = r.played;
+        row.pointsText = r.pf + ' pts';
+        row.diffText = (r.diff > 0 ? '+' : '') + r.diff;
+        return row;
+      });
+      if (game.playoffMatches) {
+        const secs = bracketViewSections(game, game.playoffMatches, 'Playoff');
+        payload.current = secs.current;
+        payload.upNext = secs.upNext;
+        return payload;
+      }
+      const rounds = [];
+      game.matches.forEach(function (m) { if (rounds.indexOf(m.round) < 0) rounds.push(m.round); });
+      rounds.sort(function (a, b) { return a - b; });
+      if (rounds.length) {
+        let curRound = rounds[rounds.length - 1];
+        for (let i = 0; i < rounds.length; i++) {
+          if (game.matches.some(function (m) { return m.round === rounds[i] && !m.scored; })) { curRound = rounds[i]; break; }
+        }
+        const byeId = game.rrByeByRound ? game.rrByeByRound[curRound] : null;
+        payload.current = {
+          label: 'Round ' + curRound,
+          note: byeId ? 'Bye this round: ' + viewNameById(game, byeId) : '',
+          rows: game.matches.filter(function (m) { return m.round === curRound; })
+            .map(function (m) { return viewMatchRow(game, game.matches, m); })
+        };
+        const nextRound = rounds.find(function (r) { return r > curRound; });
+        if (nextRound !== undefined) {
+          payload.upNext = {
+            label: 'Round ' + nextRound, note: '',
+            rows: game.matches.filter(function (m) { return m.round === nextRound; })
+              .map(function (m) { return viewMatchRow(game, game.matches, m); })
+          };
+        } else if (game.rrPairing === 'results' && !rrDone(game)) {
+          payload.upNext = { label: 'Up next', note: 'Next round is paired from the standings when this round finishes.', rows: [] };
+        } else if (rrDone(game) && game.playoffSize > 0) {
+          payload.upNext = {
+            label: 'Playoff', rows: [],
+            note: 'The top ' + Math.min(game.playoffSize, game.entries.length) + ' playoff starts once staff set it up.'
+          };
+        }
+      }
+      return payload;
+    }
+    // Bracket: no table — the bracket sections carry the picture.
+    const secs = bracketViewSections(game, game.matches, '');
+    payload.current = secs.current;
+    payload.upNext = secs.upNext;
+    return payload;
+  }
+  window.CruiseGameScoring.buildPlayerView = buildPlayerView;
+
+  /* ----- Sharing: code, push, stop -----
+     game.share = { code, startedAt } lives on the game (persisted
+     with it, so sharing survives leaving the play screen). Pushes
+     upsert the row with a rolling 24-hour expiry; every save()
+     while a game is shared schedules a debounced push. */
+  const SHARE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // no 0/O/1/l/I — unambiguous when read aloud
+  function newShareCode() {
+    let out = '';
+    try {
+      const buf = new Uint8Array(12);
+      window.crypto.getRandomValues(buf);
+      for (let i = 0; i < 12; i++) out += SHARE_ALPHABET[buf[i] % SHARE_ALPHABET.length];
+    } catch (e) {
+      for (let i = 0; i < 12; i++) out += SHARE_ALPHABET[Math.floor(Math.random() * SHARE_ALPHABET.length)];
+    }
+    return out;
+  }
+  function shareUrlFor(code) { return siteUrl() + 'view.html?c=' + code; }
+  function sbRestHeaders(extra) {
+    const cfg = window.APP_CONFIG || {};
+    const h = { Authorization: 'Bearer ' + cfg.SUPABASE_ANON_KEY, 'Content-Type': 'application/json' };
+    h['api' + 'key'] = cfg.SUPABASE_ANON_KEY;
+    if (extra) Object.keys(extra).forEach(function (k) { h[k] = extra[k]; });
+    return h;
+  }
+  function pushSharedView(game) {
+    const cfg = window.APP_CONFIG || {};
+    if (!game || !game.share || !game.share.code || !cfg.SUPABASE_URL || !cfg.SUPABASE_ANON_KEY ||
+        typeof fetch !== 'function') {
+      if (game) shareStatus[game.id] = { ok: false, at: Date.now() };
+      return Promise.resolve(false);
+    }
+    const nowMs = Date.now();
+    const body = {
+      code: game.share.code,
+      payload: buildPlayerView(game),
+      updated_at: new Date(nowMs).toISOString(),
+      expires_at: new Date(nowMs + 24 * 60 * 60 * 1000).toISOString()
+    };
+    return fetch(cfg.SUPABASE_URL + '/rest/v1/shared_views', {
+      method: 'POST',
+      headers: sbRestHeaders({ Prefer: 'resolution=merge-duplicates,return=minimal' }),
+      body: JSON.stringify(body)
+    }).then(function (res) {
+      const okPush = !!(res && res.ok);
+      shareStatus[game.id] = { ok: okPush, at: Date.now() };
+      return okPush;
+    }).catch(function () {
+      shareStatus[game.id] = { ok: false, at: Date.now() };
+      return false;
+    });
+  }
+  function scheduleSharePush(game) {
+    if (!game || !game.share || !game.share.code) return;
+    if (shareTimers[game.id]) clearTimeout(shareTimers[game.id]);
+    shareTimers[game.id] = setTimeout(function () {
+      delete shareTimers[game.id];
+      const g = getGame(game.id);
+      if (g && g.share && g.share.code) pushSharedView(g);
+    }, 1000);
+  }
+  function scheduleSharePushes() {
+    if (!S || !Array.isArray(S.games)) return;
+    S.games.forEach(function (g) { if (g.share && g.share.code) scheduleSharePush(g); });
+  }
+  function deleteSharedView(code) {
+    const cfg = window.APP_CONFIG || {};
+    if (!cfg.SUPABASE_URL || !cfg.SUPABASE_ANON_KEY || typeof fetch !== 'function') return Promise.resolve(false);
+    return fetch(cfg.SUPABASE_URL + '/rest/v1/shared_views?code=eq.' + encodeURIComponent(code), {
+      method: 'DELETE',
+      headers: sbRestHeaders({ Prefer: 'return=minimal' })
+    }).then(function (res) { return !!(res && res.ok); }).catch(function () { return false; });
+  }
+
+  /* ----- The share sheet (play + finish screens) ----- */
+  let pvStopArm = false, pvStopTimer = null;
+  function pvStatusText(game) {
+    const st = shareStatus[game.id];
+    if (!st) return 'Live';
+    return st.ok
+      ? 'Live • updated ' + new Date(st.at).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+      : 'Couldn’t update — will retry when scores change';
+  }
+  function openPlayerView(game) {
+    pvStopArm = false;
+    if (pvStopTimer) { clearTimeout(pvStopTimer); pvStopTimer = null; }
+    renderPlayerViewSheet(game, '');
+    if (game.share && game.share.code) {
+      // Opening the sheet refreshes the published view right away.
+      pushSharedView(game).then(function () {
+        const el = document.getElementById('pvStatus');
+        if (el && game.share) el.textContent = pvStatusText(game);
+      });
+    }
+  }
+  function renderPlayerViewSheet(game, errorText) {
+    let h = '<h2 style="margin-top:0">👥 Player view</h2>';
+    if (!game.share || !game.share.code) {
+      h += '<p class="note">Players scan a code to watch this game’s standings live on their own phones — who’s playing now and who’s up next, refreshing on its own.</p>' +
+        '<p class="note"><b>Only first names are shown</b> — team names for teams — never cabin numbers, never team members. Sharing needs an internet connection; scoring never does. The view expires 24 hours after its last update.</p>' +
+        (errorText ? '<p class="fb-error" id="pvError">' + esc(errorText) + '</p>' : '') +
+        '<button class="btn block" id="pvStart">Start sharing</button>' +
+        '<button class="btn ghost block" id="pvClose">Cancel</button>';
+      openModal(h);
+      document.getElementById('pvClose').addEventListener('click', closeModal);
+      document.getElementById('pvStart').addEventListener('click', function () {
+        const btn = this;
+        btn.disabled = true;
+        btn.textContent = 'Starting…';
+        game.share = { code: newShareCode(), startedAt: Date.now() };
+        save();
+        pushSharedView(game).then(function (okPush) {
+          if (okPush) { renderPlayerViewSheet(game, ''); return; }
+          game.share = null;
+          save();
+          renderPlayerViewSheet(game, 'Couldn’t start sharing — no connection? Check the internet and try again.');
+        });
+      });
+      return;
+    }
+    const url = shareUrlFor(game.share.code);
+    h += '<p class="note">Players point a camera at the code, or open the link. It updates as you score — first names only, no cabin numbers.</p>' +
+      '<div class="qrbox" id="pvQr" role="img" aria-label="QR code that opens the live player view"></div>' +
+      '<p class="shareurl">' + esc(url) + '</p>' +
+      '<p class="note" id="pvStatus" style="text-align:center;font-weight:600">' + esc(pvStatusText(game)) + '</p>' +
+      '<div class="row wrap">' +
+      '<button class="btn grow" id="pvCopy">Copy link</button>' +
+      '<button class="btn secondary grow" id="pvShareBtn">Share…</button>' +
+      '<button class="btn secondary grow" id="pvPreview">Preview</button></div>' +
+      '<button class="btn danger block" id="pvStop" style="margin-top:12px">Stop sharing</button>' +
+      '<button class="btn ghost block" id="pvClose">Close</button>';
+    openModal(h);
+    const box = document.getElementById('pvQr');
+    try {
+      if (typeof qrcode !== 'function') throw new Error('qr library missing');
+      const qr = qrcode(0, 'M');
+      qr.addData(url);
+      qr.make();
+      box.innerHTML = qr.createSvgTag({ cellSize: 6, margin: 16, scalable: true });
+    } catch (e) {
+      box.innerHTML = '<p class="note" style="text-align:center">The QR code couldn’t be drawn on this device — the link below works just the same.</p>';
+    }
+    document.getElementById('pvClose').addEventListener('click', closeModal);
+    document.getElementById('pvCopy').addEventListener('click', function () { copyText(url, 'Link copied — paste it anywhere.'); });
+    document.getElementById('pvShareBtn').addEventListener('click', function () {
+      if (navigator.share) {
+        navigator.share({ title: displayName(game) + ' — live standings', text: 'Watch the standings live:', url: url }).catch(function () { /* dismissed */ });
+      } else {
+        copyText(url, 'Link copied — paste it anywhere.');
+      }
+    });
+    document.getElementById('pvPreview').addEventListener('click', function () { window.open(url, '_blank'); });
+    document.getElementById('pvStop').addEventListener('click', function () {
+      const btn = this;
+      if (!pvStopArm) {
+        pvStopArm = true;
+        btn.textContent = 'Confirm stop?';
+        btn.classList.add('confirming');
+        if (pvStopTimer) clearTimeout(pvStopTimer);
+        pvStopTimer = setTimeout(function () {
+          pvStopArm = false;
+          const b = document.getElementById('pvStop');
+          if (b) { b.textContent = 'Stop sharing'; b.classList.remove('confirming'); }
+        }, 4000);
+        return;
+      }
+      if (pvStopTimer) { clearTimeout(pvStopTimer); pvStopTimer = null; }
+      pvStopArm = false;
+      const code = game.share.code;
+      game.share = null;
+      save();
+      deleteSharedView(code);
+      closeModal();
+    });
+  }
+
   // Per-round breakdown for a finished rounds game: one column per
   // round, plus the running Total (Cumulative) or the Result — final
   // round score, or where the entry went out (Advance).
@@ -3402,6 +3837,7 @@
     if (qsActive(game)) h += qsBreakdownHTML(game);
     h += subLogHTML(game);
     h += shareButtonsHTML(game) +
+      '<button class="btn secondary block" id="playerViewBtn" style="margin-top:10px">👥 Player view</button>' +
       '<button class="btn block" id="againBtn" style="margin-top:14px">↻ Play again (same players)</button>' +
       '<button class="btn ghost block" id="finishHomeBtn">Home</button>';
     return h;
@@ -3411,6 +3847,7 @@
     const game = getGame(gameId);
     if (!game) return;
     bindShareButtons(game);
+    document.getElementById('playerViewBtn').addEventListener('click', function () { openPlayerView(game); });
     document.getElementById('finishHomeBtn').addEventListener('click', function () { go('home'); });
     document.getElementById('againBtn').addEventListener('click', function () { playAgain(game); });
   };
