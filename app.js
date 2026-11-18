@@ -11,7 +11,7 @@
      truth; version.json (checked over the network), the menu fallback
      line in index.html, and the service-worker cache name are bumped
      alongside it on every release — see the README release checklist. */
-  const APP_VERSION = '2.0';
+  const APP_VERSION = '2.0.1';
   const UPDATE_FLAG_KEY = 'cgsa-just-updated';
   function parseVersion(v) {
     return String(v === null || v === undefined ? '' : v).trim().replace(/^v/i, '').split('.').map(function (part) {
@@ -1039,6 +1039,9 @@
       });
     });
   }
+  function startHintText() {
+    return draft.entryKind === 'teams' ? 'Add at least 2 teams to start' : 'Add at least 2 players to start';
+  }
   SCREENS.signup = function () {
     const kindWord = draft.entryKind === 'teams' ? 'team' : 'player';
     const cruise = draft.cruiseId ? getCruise(draft.cruiseId) : null;
@@ -1065,6 +1068,7 @@
       (draft.format === 'bracket' ? '<button class="btn secondary" id="shuffleBtn">🔀 Shuffle seeds</button>' : '') +
       '<span class="grow"></span><span class="sub" id="entryCount"></span></div>' +
       '<button class="btn block" id="startBtn" style="margin-top:12px">Start game</button>' +
+      '<p class="note" id="startHint" style="text-align:center;margin:8px 0 0"' + (draft.entries.length < 2 ? '' : ' hidden') + '>' + startHintText() + '</p>' +
       '<button class="btn ghost block" id="signupBack">Back to setup</button>';
     return h;
   };
@@ -1135,6 +1139,11 @@
       const pv = document.getElementById('rrPreview');
       if (pv) pv.textContent = draft.format === 'rr' ? rrPreview(draft.entries.length) : '';
       document.getElementById('startBtn').disabled = draft.entries.length < 2;
+      const startHint = document.getElementById('startHint');
+      if (startHint) {
+        startHint.textContent = startHintText();
+        startHint.hidden = draft.entries.length >= 2;
+      }
       // Roster picker (cruise sign-ups): rows mirror the entry list.
       const rp = document.getElementById('rosterPick');
       if (rp) {
