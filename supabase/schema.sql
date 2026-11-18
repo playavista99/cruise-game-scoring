@@ -4,6 +4,9 @@
 -- Scope (locked decision Q11): Supabase stores ONLY staff accounts and
 -- their custom game templates. Player names, cabin numbers, games,
 -- scores and history NEVER go to the cloud — they live on the device.
+-- ONE exception, approved by the user in v2.3 for the live player
+-- view only: the shared_views table at the bottom of this file holds
+-- first-names-only snapshots of games staff explicitly share.
 
 create table if not exists public.templates (
   id          uuid primary key default gen_random_uuid(),
@@ -55,3 +58,47 @@ drop policy if exists "feedback insert only" on public.feedback;
 
 create policy "feedback insert only" on public.feedback
   for insert to anon, authenticated with check (true);
+
+-- ---------------------------------------------------------------------
+-- Live player view (v2.3) — the ONE exception to the on-device rule,
+-- approved by the user for this feature only. When staff share a
+-- game, the app publishes a view-only snapshot (FIRST NAMES ONLY for
+-- individuals, team names as-is, NEVER cabin numbers or team member
+-- names) under an unguessable 12-character code. Writes are targeted
+-- by that code; there is deliberately NO direct select policy, so
+-- rows can never be listed or browsed — reads go only through
+-- get_shared_view(), which returns the payload for an exact code
+-- that has not expired. Views expire 24 hours after their last
+-- update (the app rolls the expiry forward on every push).
+-- ---------------------------------------------------------------------
+create table if not exists public.shared_views (
+  code       text primary key,
+  payload    jsonb not null,
+  updated_at timestamptz not null default now(),
+  expires_at timestamptz not null
+);
+
+alter table public.shared_views enable row level security;
+
+drop policy if exists "shared_views anon insert" on public.shared_views;
+drop policy if exists "shared_views anon update" on public.shared_views;
+drop policy if exists "shared_views anon delete" on public.shared_views;
+
+create policy "shared_views anon insert" on public.shared_views
+  for insert to anon, authenticated with check (true);
+create policy "shared_views anon update" on public.shared_views
+  for update to anon, authenticated using (true) with check (true);
+create policy "shared_views anon delete" on public.shared_views
+  for delete to anon, authenticated using (true);
+
+create or replace function public.get_shared_view(p_code text)
+returns jsonb
+language sql
+security definer
+set search_path = public
+as $$
+  select payload from public.shared_views
+  where code = p_code and expires_at > now();
+$$;
+
+grant execute on function public.get_shared_view(text) to anon, authenticated;
