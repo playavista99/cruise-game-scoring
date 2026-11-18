@@ -11,7 +11,7 @@
      truth; version.json (checked over the network), the menu fallback
      line in index.html, and the service-worker cache name are bumped
      alongside it on every release — see the README release checklist. */
-  const APP_VERSION = '1.9';
+  const APP_VERSION = '2.0';
   const UPDATE_FLAG_KEY = 'cgsa-just-updated';
   function parseVersion(v) {
     return String(v === null || v === undefined ? '' : v).trim().replace(/^v/i, '').split('.').map(function (part) {
@@ -121,6 +121,14 @@
     else if (c.endDate) parts.push('Until ' + fmtDay(c.endDate));
     return parts.join(' · ');
   }
+  // "Ship · dates · N games · M players" — shared by the home cruise
+  // rows and the new-game destination chooser so they always agree.
+  function cruiseCardMeta(c) {
+    const nGames = S.games.filter(function (g) { return g.cruiseId === c.id; }).length;
+    const nPlayers = c.roster ? c.roster.length : 0;
+    return [cruiseMeta(c), nGames + (nGames === 1 ? ' game' : ' games'),
+      nPlayers + (nPlayers === 1 ? ' player' : ' players')].filter(Boolean).join(' · ');
+  }
   function entryName(game, id) {
     const e = game.entries.find(function (x) { return x.id === id; });
     return e ? e.name : '—';
@@ -224,6 +232,7 @@
   let screen = { name: 'home' };
   let draft = null;         // setup/sign-up in progress
   let pendingCruiseId = null; // cruise a new-game flow was started from; consumed by startDraft
+  let pickReturn = null;     // where the pick screen's Back goes: {screen:'home'|'gamedest'} or {screen:'cruise', id}
   let openScorer = null;    // {gameId, matchId, tapsA:[], tapsB:[]}
   function go(name, arg) {
     screen = { name: name, arg: arg };
@@ -237,7 +246,7 @@
     const bind = BINDS[screen.name];
     if (bind) bind(screen.arg);
   }
-  document.getElementById('brandBtn').addEventListener('click', function () { pendingCruiseId = null; go('home'); });
+  document.getElementById('brandBtn').addEventListener('click', function () { pendingCruiseId = null; pickReturn = null; go('home'); });
   document.getElementById('accountBtn').addEventListener('click', function () { go('account'); });
 
   /* ---------------- shared fragments ---------------- */
@@ -302,7 +311,18 @@
     const inProgress = S.games.filter(function (g) { return g.status === 'playing'; });
     const finished = S.games.filter(function (g) { return g.status === 'finished'; });
     let h = '<h1>Score a game</h1>' +
-      '<button class="btn block" id="newGameBtn" style="min-height:64px;font-size:19px">＋ New game</button>';
+      '<div class="homeactions">' +
+      '<button class="btn" id="newGameBtn">🎮 New game</button>' +
+      '<button class="btn secondary" id="newCruiseBtn">🛳 New cruise</button></div>';
+    if (S.cruises.length) {
+      h += '<h2>Your cruises</h2>';
+      S.cruises.slice().reverse().forEach(function (c) {
+        h += '<div class="card row"><div class="badge" style="background:#0b6fa422;border:2px solid #0b6fa4">🛳</div><div class="grow">' +
+          '<div class="gamename">' + esc(c.name) + '</div>' +
+          '<div class="sub">' + esc(cruiseCardMeta(c)) + '</div></div>' +
+          '<button class="btn small" data-opencruise="' + c.id + '">Open</button></div>';
+      });
+    }
     if (inProgress.length) {
       h += '<h2>In progress</h2>';
       inProgress.slice().reverse().forEach(function (g) {
@@ -313,21 +333,6 @@
           '<button class="btn small" data-continue="' + g.id + '">Continue</button></div>';
       });
     }
-    h += '<h2>Cruises</h2>';
-    if (S.cruises.length) {
-      S.cruises.slice().reverse().forEach(function (c) {
-        const nGames = S.games.filter(function (g) { return g.cruiseId === c.id; }).length;
-        const meta = [cruiseMeta(c), nGames + (nGames === 1 ? ' game' : ' games'),
-          (c.roster ? c.roster.length : 0) + ((c.roster && c.roster.length === 1) ? ' player' : ' players')].filter(Boolean).join(' · ');
-        h += '<div class="card row"><div class="badge" style="background:#0b6fa422;border:2px solid #0b6fa4">🛳</div><div class="grow">' +
-          '<div class="gamename">' + esc(c.name) + '</div>' +
-          '<div class="sub">' + esc(meta) + '</div></div>' +
-          '<button class="btn small" data-opencruise="' + c.id + '">Open</button></div>';
-      });
-    } else {
-      h += '<p class="note">Working a sailing? Create a cruise and every game you run on it is filed together, with its own player roster and a summary at the end.</p>';
-    }
-    h += '<button class="btn secondary block" id="newCruiseBtn">➕ New cruise</button>';
     if (S.setups.length) {
       h += '<h2>Saved setups</h2>';
       S.setups.slice().reverse().forEach(function (p) {
@@ -360,7 +365,12 @@
   }
   BINDS.home = function () {
     disarmPresetDel(); // every fresh render starts disarmed
-    document.getElementById('newGameBtn').addEventListener('click', function () { pendingCruiseId = null; go('pick'); });
+    document.getElementById('newGameBtn').addEventListener('click', function () {
+      // With cruises on file, ask where the game belongs first; with
+      // none, go straight to the pick screen exactly as before (v2.0).
+      if (S.cruises.length) go('gamedest');
+      else { pendingCruiseId = null; pickReturn = { screen: 'home' }; go('pick'); }
+    });
     document.getElementById('newCruiseBtn').addEventListener('click', function () { openCruiseForm(); });
     document.querySelectorAll('[data-opencruise]').forEach(function (b) {
       b.addEventListener('click', function () { go('cruise', b.getAttribute('data-opencruise')); });
@@ -445,11 +455,46 @@
     if (inp) inp.focus();
   }
 
-  /* ----- Pick a game ----- */
+  /* ----- New game destination (v2.0) -----
+     Tapping New game on Home with at least one cruise on file asks
+     where the game belongs: standalone, or filed under one of the
+     cruises. The choice only sets pendingCruiseId (consumed by
+     startDraft into draft.cruiseId); every path then lands on the
+     SAME pick screen. With no cruises this screen never appears. */
+  SCREENS.gamedest = function () {
+    let h = '<h1>Where\'s this game?</h1>' +
+      '<button class="card row destrow" id="destStandalone"><div class="badge" style="background:#0b6fa422;border:2px solid #0b6fa4">🎮</div><div class="grow">' +
+      '<div class="gamename">Standalone game</div><div class="sub">Not filed under a cruise</div></div></button>';
+    S.cruises.slice().reverse().forEach(function (c) {
+      h += '<button class="card row destrow" data-destcruise="' + c.id + '"><div class="badge" style="background:#0b6fa422;border:2px solid #0b6fa4">🛳</div><div class="grow">' +
+        '<div class="gamename">' + esc(c.name) + '</div>' +
+        '<div class="sub">' + esc(cruiseCardMeta(c)) + '</div></div></button>';
+    });
+    h += '<button class="btn ghost block" id="destBack">Back</button>';
+    return h;
+  };
+  BINDS.gamedest = function () {
+    document.getElementById('destStandalone').addEventListener('click', function () {
+      pendingCruiseId = null; pickReturn = { screen: 'gamedest' }; go('pick');
+    });
+    document.querySelectorAll('[data-destcruise]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        pendingCruiseId = b.getAttribute('data-destcruise'); pickReturn = { screen: 'gamedest' }; go('pick');
+      });
+    });
+    document.getElementById('destBack').addEventListener('click', function () { go('home'); });
+  };
+
+  /* ----- Pick a game -----
+     ONE pick screen for every entry (Home standalone, Home via the
+     destination chooser, and the cruise page). When the game is
+     headed into a cruise, a banner above the list says so and can
+     drop the game back to standalone without leaving the screen. */
   SCREENS.pick = function () {
     const pc = getCruise(pendingCruiseId);
     let h = '<h1>Pick a game</h1>' +
-      (pc ? '<p class="note">🛳 New game for <b>' + esc(pc.name) + '</b> — it will be saved to that cruise, and its players join the cruise roster.</p>' : '') +
+      (pc ? '<div class="cruisebanner"><span>🛳 This game will be saved in: <b>' + esc(pc.name) + '</b></span>' +
+        '<button class="cruisebanner-btn" id="makeStandaloneBtn" type="button">Make standalone</button></div>' : '') +
       '<div class="grid">';
     allTemplates().forEach(function (t) {
       h += '<button class="pickcard" data-pick="' + t.id + '">' + badge(t, 54) + '<span>' + esc(t.name) + '</span>' +
@@ -460,14 +505,19 @@
     return h;
   };
   BINDS.pick = function () {
+    const ms = document.getElementById('makeStandaloneBtn');
+    if (ms) ms.addEventListener('click', function () { pendingCruiseId = null; render(); });
     document.querySelectorAll('[data-pick]').forEach(function (b) {
       b.addEventListener('click', function () { startDraft(b.getAttribute('data-pick')); });
     });
     document.getElementById('createBtn').addEventListener('click', function () { go('templateEditor', { id: null, thenSetup: true }); });
     document.getElementById('backBtn').addEventListener('click', function () {
-      const cid = pendingCruiseId;
+      const r = pickReturn;
+      pickReturn = null;
       pendingCruiseId = null;
-      if (cid && getCruise(cid)) go('cruise', cid); else go('home');
+      if (r && r.screen === 'cruise' && getCruise(r.id)) go('cruise', r.id);
+      else if (r && r.screen === 'gamedest' && S.cruises.length) go('gamedest');
+      else go('home');
     });
   };
 
@@ -487,6 +537,7 @@
       entries: []
     };
     pendingCruiseId = null; // consumed: a later standalone draft must not inherit it
+    pickReturn = null;
     go('setup');
   }
 
@@ -2940,6 +2991,7 @@
     document.getElementById('cruiseNewGameBtn').addEventListener('click', function () {
       rosterEditId = null;
       pendingCruiseId = c.id;
+      pickReturn = { screen: 'cruise', id: c.id };
       go('pick');
     });
     document.querySelectorAll('[data-cruisecontinue]').forEach(function (b) {
