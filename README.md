@@ -170,6 +170,23 @@ worker, clears the offline shell caches, and reloads into the new
 build. A failed check (normal on ship Wi-Fi) simply says it can't
 check right now.
 
+**Self-healing version guard (v2.1.1).** Pages publishes file by
+file and the service worker's cache fills per file, so a phone that
+loads the app mid-deploy can cache a *mixed* shell — a new
+`index.html` with an older `app.js`, whose buttons then render but do
+nothing (this is how v2.1's Home buttons failed on one phone while
+the title button, wired by every build, kept working). At startup
+the app compares `index.html`'s `<meta name="app-version">` against
+its own `APP_VERSION`; on a mismatch (or a missing meta, meaning an
+older `index.html`) it clears the `cgsa-shell-*` caches and reloads
+once, so the browser refetches a consistent pair. A sessionStorage
+flag per version-pair caps it at one heal per session — if the
+reload still serves the same mixed pair (offline, cache-only), the
+app runs as-is rather than looping, and retries next session. The
+reload is safe for the same reason reopening the app is: all games,
+drafts and settings are written to localStorage as they change, so
+nothing in progress is lost.
+
 ## Files
 
 | File | What it is |
@@ -182,11 +199,11 @@ check right now.
 | `sw.js`, `manifest.webmanifest`, `icon.svg` | Offline shell / installable PWA bits |
 | `supabase/schema.sql` | One-time database setup for the optional account |
 | `tests/engines.test.mjs` | Engine verification: `node tests/engines.test.mjs` |
-| `tests/quick-rounds.test.mjs`, `tests/rr-adds.test.mjs`, `tests/edit-players.test.mjs`, `tests/playoff-field.test.mjs`, `tests/winner-flow.test.mjs`, `tests/setup-features.test.mjs`, `tests/cruises.test.mjs`, `tests/update-check.test.mjs`, `tests/home-flow.test.mjs`, `tests/signup-hint.test.mjs`, `tests/nav.test.mjs` | End-to-end DOM tests (jsdom) driving the shipped app: `node tests/<name>.test.mjs` |
+| `tests/quick-rounds.test.mjs`, `tests/rr-adds.test.mjs`, `tests/edit-players.test.mjs`, `tests/playoff-field.test.mjs`, `tests/winner-flow.test.mjs`, `tests/setup-features.test.mjs`, `tests/cruises.test.mjs`, `tests/update-check.test.mjs`, `tests/home-flow.test.mjs`, `tests/signup-hint.test.mjs`, `tests/nav.test.mjs`, `tests/version-guard.test.mjs` | End-to-end DOM tests (jsdom) driving the shipped app: `node tests/<name>.test.mjs` |
 
 ## Release checklist
 
-Every release bumps **four things together** — if any one is left
+Every release bumps **five things together** — if any one is left
 behind, the update check and the offline shell disagree about what
 "current" means:
 
@@ -197,6 +214,9 @@ behind, the update check and the offline shell disagree about what
    JavaScript runs; the app rewrites it from `APP_VERSION` on load).
 4. The service-worker cache name in `sw.js` (`cgsa-shell-vNN`, one
    higher than the previous release).
+5. The `<meta name="app-version" content="…">` tag in `index.html`
+   (the pair-mate the self-healing version guard compares against
+   `APP_VERSION` at startup — see below).
 
 ## Hosting (GitHub Pages)
 
