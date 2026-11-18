@@ -8,8 +8,9 @@
    c. A second game in the cruise: the roster picker toggles Ana in,
       Ben stays out (no-show), Cal is added by hand — entries are
       exactly [Ana, Cal]; the roster keeps everyone, Cal with cabin.
-   d. Cruise summary: games played, distinct players, wins tally —
-      and removing a roster player never touches games already played.
+   d. Cruise summary: games played, players = the whole roster
+      (v1.8.1 — a roster-only player counts too), wins tally — and
+      removing a roster player never touches games already played.
    e. Copy players from another game at a standalone sign-up: entries
       are added (duplicates skipped), the list stays editable, and
       the game starts standalone.
@@ -180,11 +181,16 @@ click($('#finishHomeBtn'), 'home after finish 2');
 openCruiseFromHome(w, cruiseId);
 const sumCard = $$('.card')[0].textContent;
 ok(/Games played\s*2/.test(sumCard), 'd: summary games played = 2, got: ' + sumCard.replace(/\s+/g, ' ').slice(0, 80));
-ok(/Players\s*4/.test(sumCard), 'd: summary players = 4 distinct names across finished games (Daniel never played)');
+ok(/Players\s*5/.test(sumCard), 'd: summary players = 5 = whole roster size (Daniel counts even though he never played)');
 ok(sumCard.includes('Ana') && sumCard.includes('Cal'), 'd: wins tally names Ana and Cal');
 ok((sumCard.match(/1 win/g) || []).length === 2, 'd: each has exactly 1 win');
 ok(sumCard.indexOf('Ana') < sumCard.indexOf('Cal'), 'd: tied wins sort by name (Ana before Cal)');
 ok($$('[data-cruiseview]').length === 2, 'd: cruise page lists both finished games');
+// The Home cruise card's player count must agree with the summary:
+// both are the roster size (5 here — Daniel, Ana, Ben, Walt, Cal).
+click($('#cruiseBackBtn'), 'back home from cruise page');
+ok(bodyText(w).includes('2 games · 5 players'), 'd: home card meta players = 5 = roster size, agrees with summary');
+openCruiseFromHome(w, cruiseId);
 // Removing Walt from the roster must not touch game 1.
 const waltRosterId = cruise0(w).roster.find((r) => r.name === 'Walt').id;
 const waltDel = $(`[data-rosterdel="${waltRosterId}"]`);
