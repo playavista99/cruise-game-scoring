@@ -11,7 +11,7 @@
      truth; version.json (checked over the network), the menu fallback
      line in index.html, and the service-worker cache name are bumped
      alongside it on every release — see the README release checklist. */
-  const APP_VERSION = '2.0.1';
+  const APP_VERSION = '2.1';
   const UPDATE_FLAG_KEY = 'cgsa-just-updated';
   function parseVersion(v) {
     return String(v === null || v === undefined ? '' : v).trim().replace(/^v/i, '').split('.').map(function (part) {
@@ -250,6 +250,33 @@
   document.getElementById('accountBtn').addEventListener('click', function () { go('account'); });
 
   /* ---------------- shared fragments ---------------- */
+  /* ----- Screen navigation row (v2.1) -----
+     ONE nav row for the whole app, rendered at the top of every
+     screen except Home itself: "← Back" on the left (only where a
+     meaningful previous screen exists) and "🏠 Home" on the right.
+     It replaces the scattered bottom-of-screen Back buttons the
+     screens used to grow one by one. Home from anywhere is safe:
+     in-progress games persist, and a half-built draft is simply
+     abandoned — the same cleanup the brand button does. */
+  function goHomeNav() {
+    pendingCruiseId = null;
+    pickReturn = null;
+    go('home');
+  }
+  function navRowHTML(showBack) {
+    return '<div class="navrow">' +
+      (showBack
+        ? '<button class="btn small ghost" id="navBackBtn" type="button">← Back</button>'
+        : '<span></span>') +
+      '<button class="btn small secondary" id="navHomeBtn" type="button">🏠 Home</button></div>';
+  }
+  function bindNavRow(onBack) {
+    const hb = document.getElementById('navHomeBtn');
+    if (hb) hb.addEventListener('click', goHomeNav);
+    const bb = document.getElementById('navBackBtn');
+    if (bb && onBack) bb.addEventListener('click', onBack);
+  }
+
   function defSummary(def) {
     return def.attempts + ' attempts · ' + def.buttons.map(function (b) { return esc(b.label) + ' ' + b.points; }).join(' / ') +
       ' · ' + (def.winDir === 'low' ? 'low score wins' : 'high score wins');
@@ -462,7 +489,7 @@
      startDraft into draft.cruiseId); every path then lands on the
      SAME pick screen. With no cruises this screen never appears. */
   SCREENS.gamedest = function () {
-    let h = '<h1>Where\'s this game?</h1>' +
+    let h = navRowHTML(true) + '<h1>Where\'s this game?</h1>' +
       '<button class="card row destrow" id="destStandalone"><div class="badge" style="background:#0b6fa422;border:2px solid #0b6fa4">🎮</div><div class="grow">' +
       '<div class="gamename">Standalone game</div><div class="sub">Not filed under a cruise</div></div></button>';
     S.cruises.slice().reverse().forEach(function (c) {
@@ -470,10 +497,10 @@
         '<div class="gamename">' + esc(c.name) + '</div>' +
         '<div class="sub">' + esc(cruiseCardMeta(c)) + '</div></div></button>';
     });
-    h += '<button class="btn ghost block" id="destBack">Back</button>';
     return h;
   };
   BINDS.gamedest = function () {
+    bindNavRow(function () { go('home'); });
     document.getElementById('destStandalone').addEventListener('click', function () {
       pendingCruiseId = null; pickReturn = { screen: 'gamedest' }; go('pick');
     });
@@ -482,7 +509,6 @@
         pendingCruiseId = b.getAttribute('data-destcruise'); pickReturn = { screen: 'gamedest' }; go('pick');
       });
     });
-    document.getElementById('destBack').addEventListener('click', function () { go('home'); });
   };
 
   /* ----- Pick a game -----
@@ -492,7 +518,7 @@
      drop the game back to standalone without leaving the screen. */
   SCREENS.pick = function () {
     const pc = getCruise(pendingCruiseId);
-    let h = '<h1>Pick a game</h1>' +
+    let h = navRowHTML(true) + '<h1>Pick a game</h1>' +
       (pc ? '<div class="cruisebanner"><span>🛳 This game will be saved in: <b>' + esc(pc.name) + '</b></span>' +
         '<button class="cruisebanner-btn" id="makeStandaloneBtn" type="button">Make standalone</button></div>' : '') +
       '<div class="grid">';
@@ -501,17 +527,11 @@
         (t.builtin ? '' : '<span class="sub">Custom</span>') + '</button>';
     });
     h += '<button class="pickcard" id="createBtn">' + badge({ icon: '➕', color: '#0b6fa4' }, 54) + '<span>Create new game</span></button>';
-    h += '</div><button class="btn ghost block" id="backBtn">Back</button>';
+    h += '</div>';
     return h;
   };
   BINDS.pick = function () {
-    const ms = document.getElementById('makeStandaloneBtn');
-    if (ms) ms.addEventListener('click', function () { pendingCruiseId = null; render(); });
-    document.querySelectorAll('[data-pick]').forEach(function (b) {
-      b.addEventListener('click', function () { startDraft(b.getAttribute('data-pick')); });
-    });
-    document.getElementById('createBtn').addEventListener('click', function () { go('templateEditor', { id: null, thenSetup: true }); });
-    document.getElementById('backBtn').addEventListener('click', function () {
+    bindNavRow(function () {
       const r = pickReturn;
       pickReturn = null;
       pendingCruiseId = null;
@@ -519,6 +539,12 @@
       else if (r && r.screen === 'gamedest' && S.cruises.length) go('gamedest');
       else go('home');
     });
+    const ms = document.getElementById('makeStandaloneBtn');
+    if (ms) ms.addEventListener('click', function () { pendingCruiseId = null; render(); });
+    document.querySelectorAll('[data-pick]').forEach(function (b) {
+      b.addEventListener('click', function () { startDraft(b.getAttribute('data-pick')); });
+    });
+    document.getElementById('createBtn').addEventListener('click', function () { go('templateEditor', { id: null, thenSetup: true }); });
   };
 
   function startDraft(templateId) {
@@ -632,7 +658,7 @@
 
   /* ----- My games (templates) ----- */
   SCREENS.templates = function () {
-    let h = '<h1>My games</h1><p class="note">Built-in games are edited per game at setup. Custom games live here — build your own, export one to share with another staffer, or import theirs.</p>';
+    let h = navRowHTML(true) + '<h1>My games</h1><p class="note">Built-in games are edited per game at setup. Custom games live here — build your own, export one to share with another staffer, or import theirs.</p>';
     h += '<button class="btn block" id="newTplBtn">＋ Create custom game</button>';
     h += '<div class="row wrap"><button class="btn secondary grow" id="exportAllBtn">Export a game</button>' +
       '<button class="btn secondary grow" id="importBtn">Import a game</button></div>';
@@ -650,10 +676,10 @@
       h += '<div class="card row"><div>' + badge(t) + '</div><div class="grow"><div class="gamename">' + esc(t.name) + '</div>' +
         '<div class="sub">' + esc(defSummary(t)) + '</div></div></div>';
     });
-    h += '<button class="btn ghost block" id="backBtn">Back</button>';
     return h;
   };
   BINDS.templates = function () {
+    bindNavRow(function () { go('home'); });
     document.getElementById('newTplBtn').addEventListener('click', function () { go('templateEditor', { id: null }); });
     document.getElementById('importBtn').addEventListener('click', showImport);
     document.getElementById('exportAllBtn').addEventListener('click', function () {
@@ -666,7 +692,6 @@
     document.querySelectorAll('[data-playtpl]').forEach(function (b) {
       b.addEventListener('click', function () { startDraft(b.getAttribute('data-playtpl')); });
     });
-    document.getElementById('backBtn').addEventListener('click', function () { go('home'); });
   };
 
   function exportCode(t) {
@@ -728,21 +753,23 @@
     tplEditDef = existing
       ? { attempts: existing.attempts, buttons: clone(existing.buttons), winDir: existing.winDir }
       : { attempts: 3, buttons: [{ label: 'Score', points: 1 }, { label: 'Miss', points: 0 }], winDir: 'high' };
-    return '<h1>' + (existing ? 'Edit game' : 'Create custom game') + '</h1>' +
+    return navRowHTML(true) + '<h1>' + (existing ? 'Edit game' : 'Create custom game') + '</h1>' +
       '<label class="field"><span>Game name</span><input type="text" id="tplName" value="' + esc(existing ? existing.name : '') + '" placeholder="e.g. Ring Toss"></label>' +
       '<div id="tplDefWrap">' + defEditorHTML(tplEditDef, 'tpl') + '</div>' +
       '<button class="btn block" id="tplSave">' + (arg && arg.thenSetup ? 'Save & set up a game' : 'Save game') + '</button>' +
-      (existing ? '<button class="btn danger block" id="tplDelete">Delete this game</button>' : '') +
-      '<button class="btn ghost block" id="tplCancel">Cancel</button>';
+      (existing ? '<button class="btn danger block" id="tplDelete">Delete this game</button>' : '');
   };
   BINDS.templateEditor = function (arg) {
+    // Back (and the old Cancel button it replaces) leaves without
+    // saving: to the pick screen when the editor was opened from it,
+    // otherwise to My games.
+    bindNavRow(function () { go(arg && arg.thenSetup ? 'pick' : 'templates'); });
     const rerender = function (def) {
       tplEditDef = def;
       document.getElementById('tplDefWrap').innerHTML = defEditorHTML(def, 'tpl');
       bindDefEditor('tpl', rerender);
     };
     bindDefEditor('tpl', rerender);
-    document.getElementById('tplCancel').addEventListener('click', function () { go(arg && arg.thenSetup ? 'pick' : 'templates'); });
     const del = document.getElementById('tplDelete');
     if (del) del.addEventListener('click', function () {
       if (!confirm('Delete this custom game? Games already played with it stay in history.')) return;
@@ -831,7 +858,7 @@
   }
   SCREENS.setup = function () {
     const t = getTemplate(draft.templateId);
-    let h = '<h1>Set up: ' + esc(t.name) + '</h1>' +
+    let h = navRowHTML(true) + '<h1>Set up: ' + esc(t.name) + '</h1>' +
       '<div class="card row"><div>' + badge(t) + '</div><div class="grow"><div class="gamename">' + esc(t.name) + '</div>' +
       '<div class="sub">Scoring rules below start from the template — change anything for this game only.</div></div></div>' +
       (draft.cruiseId && getCruise(draft.cruiseId)
@@ -878,11 +905,11 @@
       segHTML('segPlayoffElim', [{ v: 'single', label: 'Single elimination' }, { v: 'double', label: 'Double elimination' }], draft.playoffElim) + '</div>' +
       '</div>' +
       '<button class="btn block" id="toSignup" style="margin-top:18px">Continue to sign-up →</button>' +
-      '<button class="btn secondary block" id="saveSetupBtn">💾 Save these settings</button>' +
-      '<button class="btn ghost block" id="setupBack">Back</button>';
+      '<button class="btn secondary block" id="saveSetupBtn">💾 Save these settings</button>';
     return h;
   };
   BINDS.setup = function () {
+    bindNavRow(function () { go('pick'); });
     const rerenderDef = function (def) {
       draft.def = def;
       document.getElementById('setupDefWrap').innerHTML = defEditorHTML(def, 'su');
@@ -911,7 +938,6 @@
       document.getElementById('playoffElimWrap').classList.toggle('hidden', v === '0');
     });
     bindSeg('segPlayoffElim', null, function (v) { draft.playoffElim = v; });
-    document.getElementById('setupBack').addEventListener('click', function () { go('pick'); });
     document.getElementById('toSignup').addEventListener('click', function () {
       if (!finalizeDraftFromSetup()) return;
       go('signup');
@@ -1045,7 +1071,7 @@
   SCREENS.signup = function () {
     const kindWord = draft.entryKind === 'teams' ? 'team' : 'player';
     const cruise = draft.cruiseId ? getCruise(draft.cruiseId) : null;
-    let h = '<h1>Sign up ' + kindWord + 's</h1>' +
+    let h = navRowHTML(true) + '<h1>Sign up ' + kindWord + 's</h1>' +
       (cruise ? '<p class="note">🛳 Cruise: <b>' + esc(cruise.name) + '</b></p>' : '') +
       '<p class="note">Name is required. Cabin is optional — it tells apart duplicate names and helps find winners later.' +
       (draft.entryKind === 'teams' ? ' Member names are optional too.' : '') + '</p>' +
@@ -1068,8 +1094,7 @@
       (draft.format === 'bracket' ? '<button class="btn secondary" id="shuffleBtn">🔀 Shuffle seeds</button>' : '') +
       '<span class="grow"></span><span class="sub" id="entryCount"></span></div>' +
       '<button class="btn block" id="startBtn" style="margin-top:12px">Start game</button>' +
-      '<p class="note" id="startHint" style="text-align:center;margin:8px 0 0"' + (draft.entries.length < 2 ? '' : ' hidden') + '>' + startHintText() + '</p>' +
-      '<button class="btn ghost block" id="signupBack">Back to setup</button>';
+      '<p class="note" id="startHint" style="text-align:center;margin:8px 0 0"' + (draft.entries.length < 2 ? '' : ' hidden') + '>' + startHintText() + '</p>';
     return h;
   };
   let signupEditIdx = -1; // sign-up row whose name is being edited inline (-1 = none)
@@ -1090,6 +1115,7 @@
       '</div><button class="iconbtn" data-delentry="' + i + '" aria-label="Remove">✕</button></div>';
   }
   BINDS.signup = function () {
+    bindNavRow(function () { go('setup'); });
     signupEditIdx = -1;
     const refresh = function () {
       document.getElementById('entryList').innerHTML = draft.entries.map(entryRowHTML).join('');
@@ -1135,7 +1161,9 @@
           });
         });
       });
-      document.getElementById('entryCount').textContent = draft.entries.length + (draft.entryKind === 'teams' ? ' teams' : ' players');
+      const nEntries = draft.entries.length;
+      document.getElementById('entryCount').textContent = nEntries +
+        (draft.entryKind === 'teams' ? (nEntries === 1 ? ' team' : ' teams') : (nEntries === 1 ? ' player' : ' players'));
       const pv = document.getElementById('rrPreview');
       if (pv) pv.textContent = draft.format === 'rr' ? rrPreview(draft.entries.length) : '';
       document.getElementById('startBtn').disabled = draft.entries.length < 2;
@@ -1183,7 +1211,6 @@
       }
       refresh();
     });
-    document.getElementById('signupBack').addEventListener('click', function () { go('setup'); });
     document.getElementById('startBtn').addEventListener('click', function () {
       if (draft.entries.length < 2) return;
       createGame();
@@ -1479,9 +1506,9 @@
 
   SCREENS.play = function (gameId) {
     const game = getGame(gameId);
-    if (!game) return '<p class="empty">Game not found.</p>';
+    if (!game) return navRowHTML(false) + '<p class="empty">Game not found.</p>';
     const playCruise = getCruise(game.cruiseId);
-    let h = '<div class="card row"><div>' + badge(game) + '</div><div class="grow">' +
+    let h = navRowHTML(false) + '<div class="card row"><div>' + badge(game) + '</div><div class="grow">' +
       '<div class="gamename">' + esc(displayName(game)) + '</div><div class="sub">' +
       (game.label && String(game.label).trim() ? esc(game.name) + ' · ' : '') +
       (playCruise ? '🛳 ' + esc(playCruise.name) + ' · ' : '') + esc(formatLabel(game)) + ' · ' +
@@ -1500,6 +1527,7 @@
     return h;
   };
   BINDS.play = function (gameId) {
+    bindNavRow(null); // Home only: no meaningful "previous" screen mid-game
     const game = getGame(gameId);
     if (!game) return;
     document.getElementById('gameSettingsBtn').addEventListener('click', function () { showGameSettings(game); });
@@ -1624,11 +1652,11 @@
      setup AND set here), then start the next round or finish. */
   SCREENS.roundSummary = function (gameId) {
     const game = getGame(gameId);
-    if (!game || !qsActive(game) || !game.qsRounds.rounds.length) return '<p class="empty">Game not found.</p>';
+    if (!game || !qsActive(game) || !game.qsRounds.rounds.length) return navRowHTML(false) + '<p class="empty">Game not found.</p>';
     const qs = game.qsRounds;
     const rec = qs.rounds[qs.rounds.length - 1];
     const rnum = qs.rounds.length;
-    let h = '<div class="card row"><div>' + badge(game) + '</div><div class="grow">' +
+    let h = navRowHTML(false) + '<div class="card row"><div>' + badge(game) + '</div><div class="grow">' +
       '<div class="gamename">' + esc(displayName(game)) + '</div><div class="sub">' + esc(formatLabel(game)) + '</div></div></div>';
     h += '<h1>Round ' + rnum + ' summary</h1>';
     if (rec.target !== null && rec.target !== undefined) {
@@ -1687,6 +1715,7 @@
     return h;
   };
   BINDS.roundSummary = function (gameId) {
+    bindNavRow(null); // Home only: the summary's own buttons drive the forward flow
     const game = getGame(gameId);
     if (!game || !qsActive(game)) return;
     const qs = game.qsRounds;
@@ -2132,15 +2161,14 @@
   SCREENS.playoffField = function (gameId) {
     const game = getGame(gameId);
     if (!game || game.format !== 'rr' || (game.playoffSize || 0) < 2) {
-      return '<p class="empty">No playoff field for this game.</p>' +
-        '<button class="btn ghost block" id="pfBackBtn">Back</button>';
+      return navRowHTML(true) + '<p class="empty">No playoff field for this game.</p>';
     }
     ensurePlayoffField(game);
     const flash = pfFlash; pfFlash = null;
     const st = E.computeStandings(game.entries, game.matches, game.def);
     const lineById = {};
     st.forEach(function (r) { lineById[r.id] = r; });
-    let h = '<h1>Playoff field — top ' + game.playoffField.length + '</h1>' +
+    let h = navRowHTML(true) + '<h1>Playoff field — top ' + game.playoffField.length + '</h1>' +
       '<p class="note">Seeded from the final round robin standings (standard seeding: 1 plays ' +
       game.playoffField.length + ', 2 plays ' + (game.playoffField.length - 1) + ', and so on). ' +
       'Replace anyone who can’t play, then generate the bracket.</p>';
@@ -2170,14 +2198,12 @@
       }
     });
     h += '<button class="btn ghost block" id="pfResetBtn">Reset field to standings</button>' +
-      '<button class="btn block" id="pfGenerateBtn" style="margin-top:12px">Generate bracket</button>' +
-      '<button class="btn ghost block" id="pfBackBtn">Back to game</button>';
+      '<button class="btn block" id="pfGenerateBtn" style="margin-top:12px">Generate bracket</button>';
     return h;
   };
   BINDS.playoffField = function (gameId) {
+    bindNavRow(function () { go('play', gameId); });
     const game = getGame(gameId);
-    const back = document.getElementById('pfBackBtn');
-    if (back) back.addEventListener('click', function () { go('play', gameId); });
     if (!game || game.format !== 'rr') return;
     bindSeg('segPfSize', null, function (v) {
       const size = parseInt(v, 10);
@@ -2237,13 +2263,12 @@
   }
   SCREENS.bracketView = function (gameId) {
     const game = getGame(gameId);
-    if (!game) return '<p class="empty">Game not found.</p>';
+    if (!game) return navRowHTML(false) + '<p class="empty">Game not found.</p>';
     const ctx = bracketViewContext(game);
     if (!ctx) {
-      return '<p class="empty">No bracket for this game yet.</p>' +
-        '<button class="btn ghost block" id="bvBackBtn">Back to game</button>';
+      return navRowHTML(true) + '<p class="empty">No bracket for this game yet.</p>';
     }
-    let h = '<div class="card row"><div>' + badge(game) + '</div><div class="grow">' +
+    let h = navRowHTML(true) + '<div class="card row"><div>' + badge(game) + '</div><div class="grow">' +
       '<div class="gamename">' + esc(displayName(game)) + '</div><div class="sub">' + esc(formatLabel(game)) + ' · ' +
       (ctx.where === 'po' ? 'Playoff bracket' : 'Bracket') + '</div></div></div>';
     const champ = E.resolveBracket(game.def, ctx.matches);
@@ -2252,13 +2277,11 @@
         '<div class="wname">' + nameWithDotHTML(game, champ) + '</div></div>';
     }
     h += bracketPlayHTML(game, ctx.matches, ctx.where, true);
-    h += '<button class="btn ghost block" id="bvBackBtn" style="margin-top:12px">Back to game</button>';
     return h;
   };
   BINDS.bracketView = function (gameId) {
+    bindNavRow(function () { go('play', gameId); });
     const game = getGame(gameId);
-    const back = document.getElementById('bvBackBtn');
-    if (back) back.addEventListener('click', function () { go('play', gameId); });
     if (!game) return;
     const ctx = bracketViewContext(game);
     if (ctx) bindMatchCards(game, ctx.matches, ctx.where);
@@ -2739,7 +2762,10 @@
 
   SCREENS.finish = function (gameId) {
     const game = getGame(gameId);
-    if (!game) return '<p class="empty">Game not found.</p>';
+    // The normal finish screen keeps its own action buttons (Play
+    // again / Home) and gets no nav row; only this not-found fallback
+    // needs a Home path so it can't strand the user.
+    if (!game) return navRowHTML(false) + '<p class="empty">Game not found.</p>';
     const rows = finalStandings(game);
     const winner = game.winnerId ? entryName(game, game.winnerId) : (rows.length ? rows[0].name : '—');
     const winnerId = game.winnerId || (rows.length ? rows[0].id : null);
@@ -2763,6 +2789,7 @@
     return h;
   };
   BINDS.finish = function (gameId) {
+    bindNavRow(null); // binds only on the not-found fallback's nav row
     const game = getGame(gameId);
     if (!game) return;
     bindShareButtons(game);
@@ -2834,7 +2861,7 @@
   }
   SCREENS.history = function () {
     const finished = S.games.filter(function (g) { return g.status === 'finished'; }).slice().reverse();
-    let h = '<h1>History</h1>';
+    let h = navRowHTML(true) + '<h1>History</h1>';
     if (!finished.length) h += '<p class="empty">No finished games yet.</p>';
     finished.forEach(function (g) {
       h += '<div class="card row"><div>' + badge(g) + '</div><div class="grow"><div class="gamename">' + esc(displayName(g)) + '</div>' +
@@ -2842,10 +2869,10 @@
         '<button class="btn small" data-view="' + g.id + '">View</button>' +
         '<button class="btn small danger" data-delhist="' + g.id + '">Delete</button></div>';
     });
-    h += '<button class="btn ghost block" id="backBtn">Back</button>';
     return h;
   };
   BINDS.history = function () {
+    bindNavRow(function () { go('home'); });
     disarmHistDel(); // every fresh render of this screen starts disarmed
     document.querySelectorAll('[data-view]').forEach(function (b) {
       b.addEventListener('click', function () { go('finish', b.getAttribute('data-view')); });
@@ -2868,7 +2895,6 @@
         histDelArmTimer = setTimeout(disarmHistDel, 4000);
       });
     });
-    document.getElementById('backBtn').addEventListener('click', function () { go('home'); });
   };
 
   /* ----- Cruise page (v1.8) -----
@@ -2923,12 +2949,11 @@
   SCREENS.cruise = function (cruiseId) {
     const c = getCruise(cruiseId);
     if (!c) {
-      return '<p class="empty">Cruise not found.</p>' +
-        '<button class="btn ghost block" id="cruiseBackBtn">Back</button>';
+      return navRowHTML(true) + '<p class="empty">Cruise not found.</p>';
     }
     if (!Array.isArray(c.roster)) c.roster = [];
     const meta = cruiseMeta(c);
-    let h = '<h1>🛳 ' + esc(c.name) + '</h1>' +
+    let h = navRowHTML(true) + '<h1>🛳 ' + esc(c.name) + '</h1>' +
       (meta ? '<p class="note" style="margin-top:-6px">' + esc(meta) + '</p>' : '');
     const sum = cruiseSummary(c);
     h += '<div class="card"><div class="row spread"><span>Games played</span><b>' + sum.gamesPlayed + '</b></div>' +
@@ -2985,15 +3010,13 @@
       '<p class="note">Everyone who plays a game in this cruise joins the roster automatically. Removing someone here never changes games already played.</p>' +
       '<hr class="divider">' +
       '<button class="btn danger block" data-delcruise="' + c.id + '">Delete cruise</button>' +
-      '<p class="note" style="text-align:center">Deleting a cruise removes it and its roster — its games stay, as standalone games.</p>' +
-      '<button class="btn ghost block" id="cruiseBackBtn">Back</button>';
+      '<p class="note" style="text-align:center">Deleting a cruise removes it and its roster — its games stay, as standalone games.</p>';
     return h;
   };
   BINDS.cruise = function (cruiseId) {
     disarmRosterDel(); // every fresh render starts disarmed
     disarmCruiseDel();
-    const back = document.getElementById('cruiseBackBtn');
-    if (back) back.addEventListener('click', function () { rosterEditId = null; go('home'); });
+    bindNavRow(function () { rosterEditId = null; go('home'); });
     const c = getCruise(cruiseId);
     if (!c) return;
     if (!Array.isArray(c.roster)) c.roster = [];
@@ -3149,7 +3172,7 @@
       }).catch(function () { /* offline */ });
   }
   SCREENS.account = function () {
-    let h = '<h1>Staff account</h1>' +
+    let h = navRowHTML(true) + '<h1>Staff account</h1>' +
       '<p class="note">Optional. An account only syncs your <b>custom game templates</b> across your devices. Games, players, cabins and history always stay on this device, and the app works fully signed out.</p>';
     if (sbStatus === 'not-configured') {
       h += '<div class="card"><b>Accounts are not switched on yet.</b><p class="note">This copy of the app has no Supabase project connected. To enable accounts, the site owner creates a Supabase project, runs <b>supabase/schema.sql</b>, and pastes the project URL and anon key into <b>config.js</b> (see the README). Everything else works as-is.</p></div>';
@@ -3167,11 +3190,10 @@
         '<button class="btn secondary block" id="signUpBtn">Create account</button>' +
         '<p class="note" id="accMsg"></p></div>';
     }
-    h += '<button class="btn ghost block" id="accBack">Back</button>';
     return h;
   };
   BINDS.account = function () {
-    document.getElementById('accBack').addEventListener('click', function () { go('home'); });
+    bindNavRow(function () { go('home'); });
     const so = document.getElementById('signOutBtn');
     if (so) so.addEventListener('click', function () { sb.auth.signOut(); });
     const sy = document.getElementById('syncBtn');
@@ -3434,6 +3456,11 @@
       '<button class="btn block" id="installClose">Done</button>');
     document.getElementById('installClose').addEventListener('click', closeModal);
   }
+  /* Menu Home entry (v2.1): first item in the panel. Goes Home from
+     anywhere — including mid-game; the game stays in progress. */
+  const menuHomeBtn = document.getElementById('menuHomeBtn');
+  if (menuHomeBtn) menuHomeBtn.addEventListener('click', function () { closeMenu(); goHomeNav(); });
+
   const menuInstallBtn = document.getElementById('menuInstallBtn');
   if (menuInstallBtn) menuInstallBtn.addEventListener('click', openInstall);
 
