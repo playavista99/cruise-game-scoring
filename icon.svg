@@ -1,4 +1,35 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-  <rect width="100" height="100" rx="20" fill="#0b3b5e"/>
-  <text x="50" y="70" font-size="55" text-anchor="middle">🏆</text>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1f7fc1"/>
+      <stop offset="1" stop-color="#135a8c"/>
+    </linearGradient>
+  </defs>
+  <rect width="100" height="100" rx="20" fill="url(#bg)"/>
+  <!-- Hero: gold trophy (the scoring app), defined by a darker gold stroke. -->
+  <g stroke-linecap="round">
+    <path d="M32 25 C22 25 20 33 24 39 C27 43.5 31 44.5 34 44" fill="none" stroke="#b45309" stroke-width="7.5"/>
+    <path d="M66 25 C76 25 78 33 74 39 C71 43.5 67 44.5 64 44" fill="none" stroke="#b45309" stroke-width="7.5"/>
+    <path d="M32 25 C22 25 20 33 24 39 C27 43.5 31 44.5 34 44" fill="none" stroke="#ffcc55" stroke-width="4.5"/>
+    <path d="M66 25 C76 25 78 33 74 39 C71 43.5 67 44.5 64 44" fill="none" stroke="#ffcc55" stroke-width="4.5"/>
+  </g>
+  <g fill="#ffcc55" stroke="#b45309" stroke-width="2.5" stroke-linejoin="round">
+    <path d="M30 19 L68 19 L68 33 C68 47 60 55.5 49 55.5 C38 55.5 30 47 30 33 Z"/>
+    <rect x="45" y="55.5" width="8" height="9"/>
+    <rect x="36" y="64.5" width="26" height="5.5" rx="2"/>
+    <rect x="33" y="70" width="32" height="5.5" rx="2"/>
+  </g>
+  <!-- Badge: a small All Ashore ship's wheel in the bottom-right corner,
+       so the icon reads as trophy-first, All Ashore family. -->
+  <g>
+    <circle cx="78" cy="78" r="14.5" fill="#135a8c" stroke="#ffffff" stroke-width="2.5"/>
+    <g stroke="#ffffff" stroke-width="1.8" stroke-linecap="round">
+      <line x1="78" y1="67.7" x2="78" y2="88.3"/>
+      <line x1="67.7" y1="78" x2="88.3" y2="78"/>
+      <line x1="70.7" y1="70.7" x2="85.3" y2="85.3"/>
+      <line x1="85.3" y1="70.7" x2="70.7" y2="85.3"/>
+    </g>
+    <circle cx="78" cy="78" r="8" fill="none" stroke="#ffffff" stroke-width="2.2"/>
+    <circle cx="78" cy="78" r="2.3" fill="#ffcc55"/>
+  </g>
 </svg>
