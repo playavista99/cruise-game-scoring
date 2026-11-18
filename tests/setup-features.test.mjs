@@ -94,8 +94,8 @@ function copyResults(w) {
   click($('#toSignup'), 'to signup');
   addPlayers(w, ['Ana']);
   ok($$('#entryList [data-colorpick]').length === 1, 'a: soccer with colors ON shows a swatch');
-  click($('#signupBack'), 'back to setup');
-  click($('#setupBack'), 'back to pick');
+  click($('#navBackBtn'), 'back to setup (nav row)');
+  click($('#navBackBtn'), 'back to pick (nav row)');
   click($('[data-pick="builtin-beanbag"]'), 'pick beanbag from pick screen');
   ok($('#segColors button.on').getAttribute('data-v') === 'on', 'a: Bean Bag Toss defaults colors ON');
 }
