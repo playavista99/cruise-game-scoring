@@ -399,6 +399,132 @@
     return { rounds: rounds, matches: matches };
   }
 
+  /* ---------------- round robin: remaining-schedule rebuild ----------------
+     Used when the field changes mid-game (a walk-up joins a pre-set
+     round robin) or staff ask for the remaining schedule to be
+     regenerated. Scored matches are NEVER touched by this builder —
+     the caller keeps them and appends what comes back.
+
+     Inputs:
+       ids:            entry ids, sign-up order
+       needsIn:        {id: games still needed} — target minus games
+                       already played (scored) for each entry
+       forbiddenPairs: {pairKey: true} — pairings already played. A
+                       soft constraint while both entries still need
+                       games (full cycles legitimately rematch), but a
+                       HARD constraint for fill games (below)
+       playedIn:       {id: games already played} — orders fill picks
+     Phase 1 pairs entries who still need games against each other —
+     an entry that still needs games is NEVER scheduled past its
+     need. Phase 2 covers a leftover entry whose would-be opponents
+     are all done: it plays "fill" games, but only against entries
+     whose need was already 0 when the rebuild started (players at
+     target — the completed-round-robin late-entry case). Those
+     opponents exceed their target, reported in `extras`; fills
+     prefer the opponents with the fewest games and are never a
+     rematch. If no fill opponent is available — including the odd
+     total a full field can produce, where one entry simply sits one
+     game short (the same honest math as gamesRange) — the leftover
+     need is reported in `unmet`. */
+  function buildRemainingRR(ids, needsIn, forbiddenPairs, playedIn, seedBase) {
+    forbiddenPairs = forbiddenPairs || {};
+    playedIn = playedIn || {};
+    let best = null;
+    for (let attempt = 0; attempt < 40; attempt++) {
+      const rnd = mulberry((seedBase || 7) + attempt * 104729);
+      const need = {}, unmet = {}, scheduled = {};
+      ids.forEach(function (id) {
+        need[id] = Math.max(0, needsIn[id] || 0);
+        unmet[id] = 0; scheduled[id] = 0;
+      });
+      const blockUsed = {};
+      const rounds = [];
+      let repeats = 0;
+      const pairCost = function (a, b) {
+        const k = pairKey(a, b);
+        return (blockUsed[k] ? 2 : 0) + (forbiddenPairs[k] ? 1 : 0);
+      };
+      const notePair = function (a, b) {
+        const k = pairKey(a, b);
+        if (blockUsed[k] || forbiddenPairs[k]) repeats++;
+        blockUsed[k] = (blockUsed[k] || 0) + 1;
+        scheduled[a]++; scheduled[b]++;
+        need[a]--; need[b]--;
+      };
+      const pushRound = function (pairs, used) {
+        const sitting = ids.filter(function (id) { return !used[id]; });
+        rounds.push({ pairs: pairs, bye: sitting.length === 1 ? sitting[0] : null });
+      };
+      // Phase 1: entries who need games play each other.
+      let guard = 0;
+      while (ids.filter(function (id) { return need[id] > 0; }).length >= 2 && guard++ < 400) {
+        const order = ids.filter(function (id) { return need[id] > 0; })
+          .sort(function (x, y) { return (need[y] - need[x]) || (rnd() - 0.5); });
+        const used = {}, pairs = [];
+        for (const id of order) {
+          if (used[id] || need[id] <= 0) continue;
+          const cands = order.filter(function (o) { return o !== id && !used[o] && need[o] > 0; });
+          if (!cands.length) continue;
+          cands.sort(function (p, q) {
+            return (pairCost(id, p) - pairCost(id, q)) || (need[q] - need[p]) || (rnd() - 0.5);
+          });
+          const pick = cands[0];
+          notePair(id, pick);
+          used[id] = used[pick] = true;
+          pairs.push([id, pick]);
+        }
+        if (!pairs.length) break;
+        pushRound(pairs, used);
+      }
+      // Phase 2: a leftover entry takes fill games against entries
+      // already at target (fewest games first, never a rematch).
+      guard = 0;
+      while (ids.some(function (id) { return need[id] > 0; }) && guard++ < 400) {
+        const needy = ids.filter(function (id) { return need[id] > 0; })
+          .sort(function (x, y) { return (need[y] - need[x]) || (ids.indexOf(x) - ids.indexOf(y)); });
+        const used = {}, pairs = [];
+        for (const x of needy) {
+          if (used[x] || need[x] <= 0) continue;
+          let cands = ids.filter(function (y) { return y !== x && !used[y] && need[y] > 0; });
+          if (cands.length) {
+            cands.sort(function (p, q) { return (pairCost(x, p) - pairCost(x, q)) || (need[q] - need[p]); });
+          } else {
+            // Fill opponents: only entries whose need was already 0
+            // when the rebuild started (at target), never a rematch.
+            cands = ids.filter(function (y) {
+              const k = pairKey(x, y);
+              return y !== x && !used[y] && (needsIn[y] || 0) <= 0 && !forbiddenPairs[k] && !blockUsed[k];
+            });
+            cands.sort(function (p, q) {
+              const tp = (playedIn[p] || 0) + scheduled[p];
+              const tq = (playedIn[q] || 0) + scheduled[q];
+              return (tp - tq) || (ids.indexOf(p) - ids.indexOf(q));
+            });
+          }
+          if (!cands.length) { unmet[x] += need[x]; need[x] = 0; continue; }
+          const pick = cands[0];
+          notePair(x, pick);
+          used[x] = used[pick] = true;
+          pairs.push([x, pick]);
+        }
+        if (!pairs.length) break;
+        pushRound(pairs, used);
+      }
+      ids.forEach(function (id) { if (need[id] > 0) { unmet[id] += need[id]; need[id] = 0; } });
+      const extras = {};
+      ids.forEach(function (id) {
+        const ex = scheduled[id] - (needsIn[id] || 0);
+        if (ex > 0) extras[id] = ex;
+      });
+      const unmetTotal = ids.reduce(function (s, id) { return s + unmet[id]; }, 0);
+      const score = unmetTotal * 100000 + repeats * 100 + rounds.length;
+      if (!best || score < best.score) best = { rounds: rounds, extras: extras, unmet: unmet, score: score };
+      if (unmetTotal === 0 && repeats === 0) break;
+    }
+    if (!best) return { rounds: [], extras: {}, unmet: {} };
+    return { rounds: best.rounds, extras: best.extras, unmet: best.unmet };
+  }
+
   /* ---------------- round robin: results-based (Swiss) ----------------
      Round 1 is paired in sign-up order. Each later round is paired from
      the current standings ONLY when generateNextRRRound() is called —
@@ -484,6 +610,30 @@
     game.matches.forEach(function (m) { if (m.kind === 'rr') playedPairs[pairKey(m.aId, m.bId)] = true; });
     const byeHistory = {};
     (game.rrByes || []).forEach(function (b) { byeHistory[b] = true; });
+    if (active.length === 1) {
+      // A lone active entry — only reachable when a walk-up joined a
+      // pool everyone else has already finished. Pair them against
+      // the at-target entry with the fewest games played (sign-up
+      // order breaks ties) instead of crediting a bye they did not
+      // earn; the opponent simply gets an extra game.
+      const only = active[0];
+      const others = game.entries.map(function (e) { return e.id; })
+        .filter(function (id) { return id !== only; });
+      if (!others.length) return null;
+      others.sort(function (a, b) {
+        return ((playedCount[a] || 0) - (playedCount[b] || 0)) ||
+          (game.entries.findIndex(function (e) { return e.id === a; }) -
+           game.entries.findIndex(function (e) { return e.id === b; }));
+      });
+      const loneRound = game.rrRoundsGenerated + 1;
+      game.matches.push({
+        id: uid('m'), kind: 'rr', stage: 'rr', round: loneRound,
+        aId: only, bId: others[0], sa: null, sb: null, tapsA: [], tapsB: [],
+        scored: false, autoBye: false, winnerId: null, loserId: null
+      });
+      game.rrRoundsGenerated = loneRound;
+      return loneRound;
+    }
     const res = swissPair(order, active, playedPairs, byeHistory, playedCount);
     const roundNo = game.rrRoundsGenerated + 1;
     res.pairs.forEach(function (pr) {
@@ -517,7 +667,7 @@
     buildSingleElim: buildSingleElim, buildDoubleElim: buildDoubleElim,
     resolveBracket: resolveBracket, scoreBracketMatch: scoreBracketMatch,
     computeStandings: computeStandings, gamesRange: gamesRange,
-    buildPresetRR: buildPresetRR,
+    buildPresetRR: buildPresetRR, buildRemainingRR: buildRemainingRR,
     createResultsBasedRR: createResultsBasedRR, generateNextRRRound: generateNextRRRound,
     scoreRRMatch: scoreRRMatch, rrGamesPlayed: rrGamesPlayed,
     rrAllRoundsScored: rrAllRoundsScored, rrComplete: rrComplete
