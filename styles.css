@@ -9,10 +9,18 @@ body {
 }
 .topbar {
   position: sticky; top: 0; z-index: 20;
-  display: flex; align-items: center; justify-content: space-between;
+  display: grid; grid-template-columns: 1fr minmax(0, auto) 1fr; align-items: center;
   background: #0b3b5e; color: #fff; padding: 10px 14px;
 }
-.brand { display: flex; align-items: center; gap: 8px; background: none; border: 0; color: #fff; font-size: 19px; font-weight: 700; cursor: pointer; padding: 6px 2px; }
+/* Three zones (v2.1): empty left, brand centered, buttons right. The
+   center track may shrink (minmax 0) so the brand name truncates
+   instead of colliding with the right-side buttons on narrow screens;
+   the trophy itself never shrinks. */
+.topzone-left { min-width: 0; }
+.topzone-center { display: flex; justify-content: center; min-width: 0; }
+.brand { display: flex; align-items: center; gap: 8px; background: none; border: 0; color: #fff; font-size: 19px; font-weight: 700; cursor: pointer; padding: 6px 2px; min-width: 0; max-width: 100%; }
+.brand-icon { flex: 0 0 auto; }
+.brand-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .topbtn { background: #ffffff22; color: #fff; border: 1px solid #ffffff55; border-radius: 10px; padding: 9px 14px; font-size: 15px; cursor: pointer; min-height: 44px; }
 .app { max-width: 720px; margin: 0 auto; padding: 14px 12px 48px; }
 h1 { font-size: 24px; margin: 8px 0 12px; }
@@ -166,7 +174,7 @@ table.stand tr.outrow td { opacity: 0.55; }
 input.nameedit { min-height: 44px; padding: 8px 10px; }
 
 /* ----- Header ☰ menu ----- */
-.topbtns { display: flex; align-items: center; gap: 8px; }
+.topbtns { display: flex; align-items: center; gap: 8px; justify-self: end; }
 .menupanel {
   position: absolute; top: calc(100% + 6px); right: 10px; z-index: 40;
   background: #fff; color: #12212e; border-radius: 14px; min-width: 248px;
@@ -245,6 +253,12 @@ input.nameedit { min-height: 44px; padding: 8px 10px; }
   text-decoration: underline; cursor: pointer; padding: 10px 6px; min-height: 44px;
   flex: 0 0 auto; font-family: inherit;
 }
+
+/* ----- Screen nav row (v2.1): one shared Back/Home row at the top of
+   every screen except Home itself. Back sits left, Home right; a
+   Home-only row keeps an empty left cell so Home stays put. ----- */
+.navrow { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 0 0 10px; }
+.navrow .btn { flex: 0 0 auto; }
 
 /* ----- Share / QR panel ----- */
 .qrbox { display: flex; justify-content: center; padding: 10px 0 4px; }
