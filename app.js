@@ -12,7 +12,7 @@
      line in index.html, the <meta name="app-version"> tag in
      index.html, and the service-worker cache name are bumped
      alongside it on every release — see the README release checklist. */
-  const APP_VERSION = '2.1.2';
+  const APP_VERSION = '2.2';
   const UPDATE_FLAG_KEY = 'cgsa-just-updated';
   function parseVersion(v) {
     return String(v === null || v === undefined ? '' : v).trim().replace(/^v/i, '').split('.').map(function (part) {
@@ -47,7 +47,14 @@
     { id: 'builtin-shuffle', name: 'Shuffleboard', icon: '🥏', color: '#0d9488', attempts: 4, winDir: 'high', builtin: true,
       buttons: [{ label: 'Zone 3', points: 3 }, { label: 'Zone 2', points: 2 }, { label: 'Zone 1', points: 1 }, { label: 'Miss', points: 0 }] },
     { id: 'builtin-minigolf', name: 'Mini Golf', icon: '🏌️', color: '#ca8a04', attempts: 9, winDir: 'low', builtin: true,
-      buttons: [{ label: '1', points: 1 }, { label: '2', points: 2 }, { label: '3', points: 3 }, { label: '4', points: 4 }, { label: '5+', points: 5 }] }
+      buttons: [{ label: '1', points: 1 }, { label: '2', points: 2 }, { label: '3', points: 3 }, { label: '4', points: 4 }, { label: '5+', points: 5 }] },
+    // Closest Wins (v2.2): scored by camera-measured distance, not by
+    // taps or typed points. scoreMode 'measure' — each entry's score
+    // is a distance in inches and the LOWEST wins. The def below is a
+    // harmless placeholder (attempts/buttons never render for it);
+    // winDir 'low' is the part that matters.
+    { id: 'builtin-closest', name: 'Closest Wins', icon: '🎯', color: '#db2777', attempts: 1, winDir: 'low', builtin: true, measure: true,
+      buttons: [{ label: 'Closest', points: 1 }] }
   ];
   const CUSTOM_ICONS = ['🎲', '⭐', '🏆', '🎯', '🚀', '🦄', '🍕', '🎸', '🏀', '🎳'];
   const CUSTOM_COLORS = ['#dc2626', '#0891b2', '#65a30d', '#7c3aed', '#db2777', '#4f46e5', '#059669', '#d97706'];
@@ -224,6 +231,24 @@
     return '<span class="badge" style="background:' + esc(t.color) + '22;border:2px solid ' + esc(t.color) + (size ? ';width:' + size + 'px;height:' + size + 'px' : '') + '">' + esc(t.icon) + '</span>';
   }
   function fmtDate(ts) { return new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }); }
+  /* Distances (v2.2): scores in Closest Wins games are inches.
+     fmtDist renders them the way staff say them — feet′ inches″
+     with one decimal on the inches (2′ 3.5″), or just inches under
+     a foot (8.5″). Used everywhere a measure game's score appears:
+     play rows, standings, finish, history, shared text and card. */
+  function fmtDist(inches) {
+    if (inches === null || inches === undefined || inches === '' || isNaN(inches)) return '—';
+    const v = Math.abs(Number(inches));
+    let ft = Math.floor(v / 12);
+    let inch = Math.round((v - ft * 12) * 10) / 10;
+    if (inch >= 12) { ft += 1; inch = 0; }
+    const inchTxt = inch.toFixed(1);
+    return (inches < 0 ? '-' : '') + (ft > 0 ? ft + '′ ' + inchTxt + '″' : inchTxt + '″');
+  }
+  function fmtDistCm(inches) {
+    if (inches === null || inches === undefined || isNaN(inches)) return '—';
+    return (Math.round(Number(inches) * 2.54 * 10) / 10).toFixed(1) + ' cm';
+  }
   function parseNum(v, fallback) {
     const n = parseInt(String(v).replace(/[^0-9-]/g, ''), 10);
     return isNaN(n) ? fallback : n;
@@ -341,7 +366,8 @@
     let h = '<h1>Score a game</h1>' +
       '<div class="homeactions">' +
       '<button class="btn" id="newGameBtn">🎮 New game</button>' +
-      '<button class="btn secondary" id="newCruiseBtn">🛳 New cruise</button></div>';
+      '<button class="btn secondary" id="newCruiseBtn">🛳 New cruise</button></div>' +
+      '<button class="btn secondary block" id="measureBtn" style="margin-top:10px">📏 Camera measure</button>';
     if (S.cruises.length) {
       h += '<h2>Your cruises</h2>';
       S.cruises.slice().reverse().forEach(function (c) {
@@ -438,6 +464,7 @@
       else { pendingCruiseId = null; pickReturn = { screen: 'home' }; go('pick'); }
     });
     document.getElementById('newCruiseBtn').addEventListener('click', function () { openCruiseForm(); });
+    document.getElementById('measureBtn').addEventListener('click', function () { startMeasure('free', null); });
     document.querySelectorAll('[data-opencruise]').forEach(function (b) {
       b.addEventListener('click', function () { go('cruise', b.getAttribute('data-opencruise')); });
     });
@@ -592,7 +619,9 @@
     draft = {
       templateId: templateId,
       def: { attempts: t.attempts, buttons: clone(t.buttons), winDir: t.winDir },
-      format: 'quick', entryKind: 'individuals', scoreMode: 'tap',
+      // A measure template (Closest Wins) is born in 'measure' mode
+      // and stays Quick Score — setup locks both for it.
+      format: 'quick', entryKind: 'individuals', scoreMode: t.measure ? 'measure' : 'tap',
       elim: 'single', rrGames: '2', rrPairing: 'preset', playoffSize: '0', playoffElim: 'single',
       qsRoundsOn: 'off', qsMode: 'cumulative', qsPlanned: [''], qsPlannedParsed: null,
       // Colors are a setup choice (v1.7): Bean Bag Toss defaults ON
@@ -714,7 +743,7 @@
     h += '<h2>Built-in games</h2>';
     BUILTINS.forEach(function (t) {
       h += '<div class="card row"><div>' + badge(t) + '</div><div class="grow"><div class="gamename">' + esc(t.name) + '</div>' +
-        '<div class="sub">' + esc(defSummary(t)) + '</div></div></div>';
+        '<div class="sub">' + (t.measure ? 'Camera-measured distances · closest wins' : esc(defSummary(t))) + '</div></div></div>';
     });
     return h;
   };
@@ -898,6 +927,7 @@
   }
   SCREENS.setup = function () {
     const t = getTemplate(draft.templateId);
+    const isMeasure = draft.scoreMode === 'measure';
     let h = navRowHTML(true) + '<h1>Set up: ' + esc(t.name) + '</h1>' +
       '<div class="card row"><div>' + badge(t) + '</div><div class="grow"><div class="gamename">' + esc(t.name) + '</div>' +
       '<div class="sub">Scoring rules below start from the template — change anything for this game only.</div></div></div>' +
@@ -907,18 +937,27 @@
       '<label class="field"><span>Game label (optional)</span>' +
       '<input type="text" id="suLabel" value="' + esc(draft.label || '') + '" placeholder="e.g. Soccer Shootout — Day 1" maxlength="60"></label>' +
       '<p class="note">A label names THIS game — “Soccer Shootout Tournament”, “Day 2 rematch” — and shows wherever the game’s name appears. Blank keeps the plain game name.</p>' +
-      '<div id="setupDefWrap">' + defEditorHTML(draft.def, 'su') + '</div>' +
-      '<h2>Format</h2>' + segHTML('segFormat', [
-        { v: 'quick', label: 'Quick Score' }, { v: 'bracket', label: 'Bracket' }, { v: 'rr', label: 'Round Robin' }], draft.format) +
+      (isMeasure
+        ? '<div class="card" style="margin:10px 0"><div class="gamename" style="font-size:16px">📏 Scored by camera measurement</div>' +
+          '<p class="note" style="margin-bottom:0">There are no scoring buttons for this game. On the play screen you photograph where ' +
+          'everything landed, tap the corners of a known-size rectangle (a cornhole board works), then tap the target and each ball — ' +
+          'the app works out the real distances, and the <b>closest distance wins</b>. Distances can also be typed in by hand. ' +
+          'Photos are never saved; only the distances are kept.</p></div>'
+        : '<div id="setupDefWrap">' + defEditorHTML(draft.def, 'su') + '</div>') +
+      '<h2>Format</h2>' + (isMeasure
+        ? '<p class="note" style="margin-top:0">Closest Wins is a <b>Quick Score</b> game — the format is locked. Everyone is measured ' +
+          'against the same target and the leaderboard ranks by distance, closest first.</p>'
+        : segHTML('segFormat', [
+          { v: 'quick', label: 'Quick Score' }, { v: 'bracket', label: 'Bracket' }, { v: 'rr', label: 'Round Robin' }], draft.format)) +
       '<h2>Who is playing</h2>' + segHTML('segKind', [
         { v: 'individuals', label: 'Individuals' }, { v: 'teams', label: 'Teams' }], draft.entryKind) +
-      '<h2>Score entry</h2>' + segHTML('segMode', [
-        { v: 'tap', label: 'Tap-by-tap (app adds up)' }, { v: 'total', label: 'Type final total' }], draft.scoreMode) +
+      (isMeasure ? '' : '<h2>Score entry</h2>' + segHTML('segMode', [
+        { v: 'tap', label: 'Tap-by-tap (app adds up)' }, { v: 'total', label: 'Type final total' }], draft.scoreMode)) +
       '<h2>Player colors</h2>' + segHTML('segColors', [
         { v: 'on', label: 'On — a color for each entry' }, { v: 'off', label: 'Off — no colors' }], draft.useColors ? 'on' : 'off') +
       '<p class="note">On: every player or team gets a color (Red, Blue, Green, …) shown next to their name at sign-up, in play, in results and in history. ' +
       'Bean Bag Toss starts with colors on — the bags are colored — everything else starts with them off. Either way it is your choice, here at setup.</p>' +
-      '<div id="quickOpts" class="' + (draft.format === 'quick' ? '' : 'hidden') + '">' +
+      (isMeasure ? '' : '<div id="quickOpts" class="' + (draft.format === 'quick' ? '' : 'hidden') + '">' +
       '<h2>Rounds</h2>' + segHTML('segQsRounds', [
         { v: 'off', label: 'Off — one leaderboard' }, { v: 'on', label: 'On — play in rounds' }], draft.qsRoundsOn) +
       '<div id="qsOpts" class="' + (draft.qsRoundsOn === 'on' ? '' : 'hidden') + '">' +
@@ -930,7 +969,7 @@
       '<p class="note">Targets are where a round’s bar sits — on Cornhole, round 1 might need 5 points, round 2 a new amount to stay in. ' +
       'You do <b>not</b> have to plan them all now: after each round the summary screen lets you set or change the next round’s target before it starts. ' +
       'Advance mode needs a Round 1 target; in Cumulative mode targets are just optional pace markers.</p></div>' +
-      '</div></div>' +
+      '</div></div>') +
       '<div id="bracketOpts" class="' + (draft.format === 'bracket' ? '' : 'hidden') + '">' +
       '<h2>Elimination</h2>' + segHTML('segElim', [
         { v: 'single', label: 'Single elimination' }, { v: 'double', label: 'Double elimination' }], draft.elim) + '</div>' +
@@ -993,7 +1032,9 @@
   // config is invalid (Advance rounds without a Round 1 target), so a
   // saved preset can never hold a config a manual setup would reject.
   function finalizeDraftFromSetup() {
-    draft.def = readDefEditor('su');
+    // Measure games have no def editor on the setup screen — their
+    // def stays the template's (only winDir 'low' matters).
+    if (draft.scoreMode !== 'measure') draft.def = readDefEditor('su');
     const rrInput = document.getElementById('rrGames');
     if (rrInput) draft.rrGames = rrInput.value;
     const lbl = document.getElementById('suLabel');
@@ -1277,7 +1318,7 @@
         delete e.color; // colors off: entries carry no color at all
       }
     });
-    if (draft.format === 'quick' && draft.qsRoundsOn === 'on') {
+    if (draft.format === 'quick' && draft.qsRoundsOn === 'on' && draft.scoreMode !== 'measure') {
       game.qsRounds = {
         mode: draft.qsMode,                       // 'cumulative' | 'advance'
         planned: (draft.qsPlannedParsed || []).slice(), // target per round (index = round-1), null = none set
@@ -1536,7 +1577,13 @@
     return null;
   }
   function canFinish(game) {
-    if (game.format === 'quick') return game.entries.length > 0;
+    if (game.format === 'quick') {
+      // A measure game needs at least one real distance before a
+      // winner means anything — otherwise Finish would crown the
+      // first unscored entry by sort order alone.
+      if (game.scoreMode === 'measure') return game.entries.some(function (e) { return e.total !== null && e.total !== undefined; });
+      return game.entries.length > 0;
+    }
     if (game.format === 'bracket') return !!currentChampion(game);
     // rr
     if (!rrDone(game)) return false;
@@ -1552,7 +1599,9 @@
       '<div class="gamename">' + esc(displayName(game)) + '</div><div class="sub">' +
       (game.label && String(game.label).trim() ? esc(game.name) + ' · ' : '') +
       (playCruise ? '🛳 ' + esc(playCruise.name) + ' · ' : '') + esc(formatLabel(game)) + ' · ' +
-      (game.scoreMode === 'tap' ? 'Tap-by-tap scoring' : 'Final-total scoring') + '</div></div>' +
+      (game.scoreMode === 'tap' ? 'Tap-by-tap scoring'
+        : game.scoreMode === 'measure' ? 'Camera-measured distances · closest wins'
+        : 'Final-total scoring') + '</div></div>' +
       '<button class="btn small secondary" id="editPlayersBtn">👥 Edit players</button>' +
       '<button class="btn small secondary" id="gameSettingsBtn">⚙ Game settings</button></div>';
     if (game.format === 'quick') h += quickPlayHTML(game);
@@ -1580,7 +1629,7 @@
     });
     const fb = document.getElementById('finishBtn');
     if (fb) fb.addEventListener('click', function () { finishGame(game); });
-    if (game.format === 'quick') bindQuick(game);
+    if (game.format === 'quick') { if (game.scoreMode === 'measure') bindMeasurePlay(game); else bindQuick(game); }
     else if (game.format === 'bracket') {
       bindMatchCards(game, game.matches, 'brk'); bindBracketAdd(game);
       const vb = document.getElementById('viewBracketBtn');
@@ -1605,6 +1654,7 @@
       '<div class="roundbanner-sub">' + esc(sub) + '</div></div>';
   }
   function quickPlayHTML(game) {
+    if (game.scoreMode === 'measure') return measurePlayHTML(game);
     const rounds = qsActive(game);
     const sorted = quickPlaySorted(game);
     let h = '';
@@ -1674,7 +1724,14 @@
         if (e) { e.total = inp.value.trim() === '' ? null : parseNum(inp.value, 0); save(); render(); }
       });
     });
-    document.getElementById('walkAdd').addEventListener('click', function () {
+    bindWalkUp(game);
+  }
+  // The walk-up row is identical on every Quick Score play screen
+  // (tap, total and measure alike), so its binding is shared.
+  function bindWalkUp(game) {
+    const btn = document.getElementById('walkAdd');
+    if (!btn) return;
+    btn.addEventListener('click', function () {
       const nm = document.getElementById('walkName');
       if (!nm.value.trim()) { nm.focus(); return; }
       const e = { id: E.uid('e'), name: nm.value.trim(), cabin: document.getElementById('walkCabin').value.trim(), taps: [], total: null };
@@ -1684,6 +1741,522 @@
       save(); render();
     });
   }
+
+  /* ----- Closest Wins play (scoreMode 'measure', v2.2) -----
+     Each entry's score is a distance in inches in the same e.total
+     field 'total' mode uses, so the classic Quick Score sorting and
+     winner logic works unchanged under winDir 'low' (unscored
+     entries sort last). One photo measures the whole field against
+     a single target; distances can also be typed per entry. */
+  function measurePlayHTML(game) {
+    const sorted = quickSorted(game);
+    let h = '<button class="btn block" id="measurePhotoBtn">📏 Measure from a photo</button>' +
+      '<p class="note" style="text-align:center">One photo measures everyone’s ball against the target. ' +
+      'No photo handy? Type a distance on any row instead.</p>' +
+      '<h2>Leaderboard — closest first</h2>';
+    sorted.forEach(function (e, i) {
+      const ec = entryColorInGame(game, e);
+      const measured = e.total !== null && e.total !== undefined;
+      h += '<div class="card" style="margin:8px 0;padding:12px"><div class="row spread">' +
+        '<div class="grow">' + colorDotHTML(ec) + '<span class="gamename" style="font-size:17px">' + (i + 1) + '. ' + esc(e.name) + '</span>' +
+        (e.cabin ? '<span class="tag">Cabin ' + esc(e.cabin) + '</span>' : '') + '</div>' +
+        '<div class="score" style="font-size:20px;font-weight:800">' + (measured ? fmtDist(e.total) : '—') + '</div></div>' +
+        '<div class="row" style="margin-top:8px"><span class="sub grow">' + (measured ? 'Distance from the target' : 'Not measured yet') + '</span>' +
+        '<button class="btn small secondary" data-typedist="' + e.id + '">Type…</button></div></div>';
+    });
+    h += '<h3>Add a walk-up</h3><div class="entryrow">' +
+      '<input type="text" class="nm" id="walkName" placeholder="Name" autocomplete="off">' +
+      '<input type="text" class="cb" id="walkCabin" placeholder="Cabin" inputmode="numeric">' +
+      '<button class="iconbtn" id="walkAdd" aria-label="Add">＋</button></div>';
+    return h;
+  }
+  function bindMeasurePlay(game) {
+    document.getElementById('measurePhotoBtn').addEventListener('click', function () { startMeasure('contest', game.id); });
+    document.querySelectorAll('[data-typedist]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        const e = game.entries.find(function (x) { return x.id === b.getAttribute('data-typedist'); });
+        if (e) openTypeDistance(game, e);
+      });
+    });
+    bindWalkUp(game);
+  }
+  /* Type a distance by hand (feet + inches) — the no-photo path,
+     and the fix-up path for a mis-tap. */
+  function openTypeDistance(game, e) {
+    const has = e.total !== null && e.total !== undefined;
+    const ft = has ? Math.floor(e.total / 12) : '';
+    const inch = has ? Math.round((e.total - Math.floor(e.total / 12) * 12) * 10) / 10 : '';
+    openModal('<h2 style="margin-top:0">Distance — ' + esc(e.name) + '</h2>' +
+      '<p class="note">How far was their ball from the target?</p>' +
+      '<div class="entryrow"><input type="text" id="tdFeet" inputmode="numeric" placeholder="Feet" value="' + ft + '" aria-label="Feet">' +
+      '<input type="text" id="tdInches" inputmode="decimal" placeholder="Inches" value="' + inch + '" aria-label="Inches"></div>' +
+      '<button class="btn block" id="tdSave">Save distance</button>' +
+      (has ? '<button class="btn secondary block" id="tdClear">Clear — mark as not measured</button>' : '') +
+      '<button class="btn ghost block" id="tdCancel">Cancel</button>');
+    document.getElementById('tdCancel').addEventListener('click', closeModal);
+    const clear = document.getElementById('tdClear');
+    if (clear) clear.addEventListener('click', function () { e.total = null; save(); closeModal(); render(); });
+    document.getElementById('tdSave').addEventListener('click', function () {
+      const f = parseFloat(document.getElementById('tdFeet').value);
+      const i = parseFloat(document.getElementById('tdInches').value);
+      const fv = isNaN(f) ? 0 : f, iv = isNaN(i) ? 0 : i;
+      e.total = Math.round((fv * 12 + iv) * 10) / 10;
+      save(); closeModal(); render();
+    });
+    const inp = document.getElementById('tdFeet');
+    if (inp) inp.focus();
+  }
+
+  /* ----- Camera measure screen (v2.2) -----
+     One screen, two modes sharing an in-memory session:
+       free    — a pocket tape measure: calibrate, tap A and B.
+       contest — measure a Closest Wins game: calibrate, tap the
+                 target, tap each ball and say whose it is; Save
+                 writes the distances as the game's scores.
+     The photo lives ONLY in this session (a downscaled data URL in
+     memory) — it is never written to localStorage, and leaving the
+     screen throws it away; only numbers persist. Points are stored
+     as fractions of the photo's width/height so responsive scaling
+     can't skew them; the homography runs in natural pixels via
+     engines.js. Both measured points must lie on the same flat
+     plane as the calibration rectangle. */
+  let measureSession = null;
+  let measureDragEndedAt = 0;
+  const MEASURE_CORNERS = ['top-left', 'top-right', 'bottom-right', 'bottom-left'];
+  function newMeasureSession(mode, gameId) {
+    return {
+      mode: mode, gameId: gameId || null,
+      photo: null,              // {dataUrl, w, h} natural size
+      refId: 'cornhole', customW: '', customH: '',
+      corners: [],              // [{fx, fy}] up to 4
+      H: null, swapped: false, calibError: '',
+      target: null,             // contest {fx, fy}
+      pendingBall: null,        // contest {fx, fy} awaiting assignment
+      marks: {},                // contest entryId -> {fx, fy, dist}
+      pairs: [],                // free [{a:{fx,fy}, b:{fx,fy}, dist}]
+      pendingA: null,           // free {fx, fy}
+      units: 'in'               // free readout units: 'in' | 'cm'
+    };
+  }
+  function startMeasure(mode, gameId) {
+    measureSession = newMeasureSession(mode, gameId);
+    go('measure');
+  }
+  function measureGame() {
+    return measureSession && measureSession.gameId ? getGame(measureSession.gameId) : null;
+  }
+  function measureRefDims() {
+    const s = measureSession;
+    if (!s) return null;
+    if (s.refId === 'custom') {
+      const w = parseFloat(s.customW), h = parseFloat(s.customH);
+      if (isNaN(w) || isNaN(h) || w <= 0 || h <= 0) return null;
+      return { w: w, h: h, name: 'rectangle' };
+    }
+    const r = E.MEASURE_REFS.find(function (x) { return x.id === s.refId; }) || E.MEASURE_REFS[0];
+    return { w: r.w, h: r.h, name: r.name };
+  }
+  function measureNat(pt) {
+    const p = measureSession.photo;
+    return { x: pt.fx * p.w, y: pt.fy * p.h };
+  }
+  // (Re)build the homography from the placed corners and refresh
+  // every stored distance. Safe to call at any time — it no-ops
+  // until a photo, 4 corners and valid reference dims all exist.
+  function recomputeMeasure() {
+    const s = measureSession;
+    if (!s) return;
+    s.H = null; s.swapped = false;
+    if (!s.photo || s.corners.length < 4) return;
+    const dims = measureRefDims();
+    if (!dims) return;
+    let W = dims.w, Hh = dims.h;
+    // Orientation sanity: if the tapped "width" edge is the long
+    // one on screen while the reference says width is the short
+    // side, the rectangle was photographed the other way round
+    // (a cornhole board shot from its side) — swap the dims so the
+    // distances still come out right, and say so on screen.
+    const c = s.corners;
+    const e1 = Math.hypot((c[1].fx - c[0].fx) * s.photo.w, (c[1].fy - c[0].fy) * s.photo.h);
+    const e2 = Math.hypot((c[3].fx - c[0].fx) * s.photo.w, (c[3].fy - c[0].fy) * s.photo.h);
+    if (W !== Hh && e1 > 0 && e2 > 0) {
+      const pxRatio = e1 / e2;
+      const dNormal = Math.abs(Math.log(pxRatio / (W / Hh)));
+      const dSwapped = Math.abs(Math.log(pxRatio / (Hh / W)));
+      if (dSwapped < dNormal) { const t = W; W = Hh; Hh = t; s.swapped = true; }
+    }
+    const plane = [{ x: 0, y: 0 }, { x: W, y: 0 }, { x: W, y: Hh }, { x: 0, y: Hh }];
+    s.H = E.computeHomography(s.corners.map(measureNat), plane);
+    if (!s.H) return;
+    s.pairs.forEach(function (pr) { pr.dist = E.measureDistance(s.H, measureNat(pr.a), measureNat(pr.b)); });
+    Object.keys(s.marks).forEach(function (id) {
+      const m = s.marks[id];
+      m.dist = s.target ? E.measureDistance(s.H, measureNat(s.target), measureNat(m)) : null;
+    });
+  }
+  function measureDistTo(pt) {
+    const s = measureSession;
+    if (!s || !s.H || !s.target || !pt) return null;
+    return E.measureDistance(s.H, measureNat(s.target), measureNat(pt));
+  }
+  function measurePhase() {
+    const s = measureSession;
+    if (!s || !s.photo) return 'photo';
+    if (s.corners.length < 4 || !s.H) return 'calibrate';
+    if (s.mode === 'contest' && !s.target) return 'target';
+    return 'measure';
+  }
+  // The single tap entry point — the stage's click handler and the
+  // test seam both land here, so they can never drift apart.
+  function measureTapAt(fx, fy) {
+    const s = measureSession;
+    if (!s || !s.photo) return;
+    const pt = { fx: Math.min(1, Math.max(0, fx)), fy: Math.min(1, Math.max(0, fy)) };
+    const phase = measurePhase();
+    if (phase === 'calibrate') {
+      if (s.corners.length < 4) {
+        s.corners.push(pt);
+        if (s.corners.length === 4) {
+          recomputeMeasure();
+          if (!s.H) {
+            s.corners = [];
+            s.calibError = 'Those corners don’t outline the rectangle cleanly — try again, tapping one corner at a time.';
+          } else s.calibError = '';
+        }
+      }
+      render();
+      return;
+    }
+    if (phase === 'target') { s.target = pt; render(); return; }
+    if (phase !== 'measure') return;
+    if (s.mode === 'free') {
+      if (!s.pendingA) s.pendingA = pt;
+      else {
+        s.pairs.push({ a: s.pendingA, b: pt, dist: E.measureDistance(s.H, measureNat(s.pendingA), measureNat(pt)) });
+        s.pendingA = null;
+      }
+      render();
+      return;
+    }
+    // Contest measure phase: a tap starts a ball; it must be
+    // assigned (or cancelled) before the next tap counts.
+    if (s.pendingBall) return;
+    s.pendingBall = pt;
+    render();
+  }
+  function setMeasurePhoto(photo) {
+    const s = measureSession;
+    if (!s || !photo) return;
+    s.photo = photo;
+    s.corners = []; s.H = null; s.swapped = false; s.calibError = '';
+    s.target = null; s.pendingBall = null; s.marks = {}; s.pairs = []; s.pendingA = null;
+    render();
+  }
+  function loadMeasurePhoto(file) {
+    const reader = new FileReader();
+    reader.onload = function () {
+      const img = new Image();
+      img.onload = function () {
+        const MAX = 1600;
+        const scale = Math.min(1, MAX / Math.max(img.naturalWidth || 1, img.naturalHeight || 1));
+        const w = Math.max(1, Math.round((img.naturalWidth || 1) * scale));
+        const h = Math.max(1, Math.round((img.naturalHeight || 1) * scale));
+        const cv = document.createElement('canvas');
+        cv.width = w; cv.height = h;
+        const ctx = cv.getContext('2d');
+        let url = reader.result;
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, w, h);
+          try { url = cv.toDataURL('image/jpeg', 0.8); } catch (e) { /* keep the original data URL */ }
+        }
+        setMeasurePhoto({ dataUrl: url, w: w, h: h });
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  }
+  function measureInstruction() {
+    const s = measureSession;
+    const phase = measurePhase();
+    const dims = measureRefDims();
+    if (phase === 'calibrate') {
+      if (s.calibError) return s.calibError;
+      if (s.corners.length >= 4) return 'Those corners don’t outline a usable rectangle — drag them apart, or restart calibration.';
+      if (s.refId === 'custom' && !dims) return 'Type the rectangle’s width and height in inches first — then tap its corners.';
+      return 'Tap corner ' + (s.corners.length + 1) + ' of 4 — the ' + MEASURE_CORNERS[s.corners.length] +
+        ' corner of the ' + (dims ? dims.name.toLowerCase() : 'rectangle') + '. You can drag any marker to fine-tune it.';
+    }
+    if (phase === 'target') return 'Calibrated ✓ Now tap the target 🎯 — the hole, the pin, the spot everyone aimed at.';
+    if (s.mode === 'free') {
+      return s.pendingA
+        ? 'Now tap point B — the distance appears below.'
+        : 'Tap any point on the surface (point A), then a second point (point B). Drag markers to adjust.';
+    }
+    if (s.pendingBall) return 'Whose ball is that? Pick the player below — or cancel if it isn’t a ball.';
+    return 'Tap a ball on the photo. Drag the 🎯 or any marker to adjust.';
+  }
+  function measureStageHTML() {
+    const s = measureSession;
+    let h = '<p class="note" id="measureInstr" style="font-weight:600;color:#0b3b5e">' + esc(measureInstruction()) + '</p>' +
+      '<div class="measurestage" id="measureStage"><img id="measureImg" src="' + s.photo.dataUrl + '" alt="Photo being measured">';
+    s.corners.forEach(function (c, i) {
+      h += '<div class="mark corner" data-mark="corner:' + i + '" style="left:' + (c.fx * 100) + '%;top:' + (c.fy * 100) + '%">' + (i + 1) + '</div>';
+    });
+    if (s.target) h += '<div class="mark target" data-mark="target" style="left:' + (s.target.fx * 100) + '%;top:' + (s.target.fy * 100) + '%">🎯</div>';
+    if (s.pendingA) h += '<div class="mark ab" data-mark="pendingA" style="left:' + (s.pendingA.fx * 100) + '%;top:' + (s.pendingA.fy * 100) + '%">A</div>';
+    s.pairs.forEach(function (pr, i) {
+      h += '<div class="mark ab" data-mark="pairA:' + i + '" style="left:' + (pr.a.fx * 100) + '%;top:' + (pr.a.fy * 100) + '%">A</div>' +
+        '<div class="mark ab b" data-mark="pairB:' + i + '" style="left:' + (pr.b.fx * 100) + '%;top:' + (pr.b.fy * 100) + '%">B</div>';
+    });
+    if (s.pendingBall) h += '<div class="mark ball pending" data-mark="pendingBall" style="left:' + (s.pendingBall.fx * 100) + '%;top:' + (s.pendingBall.fy * 100) + '%">?</div>';
+    const game = measureGame();
+    Object.keys(s.marks).forEach(function (id) {
+      const m = s.marks[id];
+      const e = game ? game.entries.find(function (x) { return x.id === id; }) : null;
+      const ec = game ? entryColorById(game, id) : null;
+      h += '<div class="mark ball" data-mark="ball:' + id + '" style="left:' + (m.fx * 100) + '%;top:' + (m.fy * 100) + '%;' +
+        (ec ? 'background:' + ec.hex + ';' : '') + '"><span class="marklabel">' + esc(e ? e.name : '?') +
+        (m.dist !== null && m.dist !== undefined ? ' · ' + fmtDist(m.dist) : '') + '</span></div>';
+    });
+    h += '</div>';
+    if (s.swapped) h += '<p class="note">The rectangle looks photographed the other way round, so its width and height were swapped — the distances account for it.</p>';
+    return h;
+  }
+  function measureControlsHTML() {
+    const s = measureSession;
+    const phase = measurePhase();
+    let h = '';
+    if (phase === 'calibrate') {
+      h += '<div class="row wrap">' +
+        (s.corners.length ? '<button class="btn secondary small" id="measureUndoCorner">↩ Undo corner</button>' : '') +
+        (s.corners.length ? '<button class="btn ghost small" id="measureRestartCal">Restart calibration</button>' : '') +
+        '<button class="btn ghost small" id="measureNewPhoto">Use a different photo</button></div>';
+      return h;
+    }
+    h += '<h2>2 · Measure</h2>';
+    if (s.mode === 'free') {
+      if (s.pairs.length) {
+        h += '<div class="card" style="padding:8px 12px"><table class="stand">';
+        s.pairs.forEach(function (pr, i) {
+          h += '<tr><td>Measurement ' + (i + 1) + '</td><td class="num"><b>' + (s.units === 'cm' ? fmtDistCm(pr.dist) : fmtDist(pr.dist)) + '</b></td>' +
+            '<td class="num"><button class="iconbtn" data-delpair="' + i + '" aria-label="Remove measurement">✕</button></td></tr>';
+        });
+        h += '</table></div>';
+      } else {
+        h += '<p class="note">No measurements yet — tap two points on the photo.</p>';
+      }
+      if (s.pendingA) h += '<button class="btn secondary block" id="measureCancelPair">Cancel this measurement</button>';
+      h += '<div class="row wrap"><button class="btn secondary small" id="measureUnits">' +
+        (s.units === 'cm' ? 'Show feet / inches' : 'Show centimetres') + '</button>' +
+        '<button class="btn ghost small" id="measureRestartCal">Redo calibration</button>' +
+        '<button class="btn ghost small" id="measureNewPhoto">Use a different photo</button></div>';
+      return h;
+    }
+    // Contest controls.
+    const game = measureGame();
+    if (!game) return h + '<p class="empty">Game not found.</p>';
+    if (s.pendingBall) {
+      const unmeasured = game.entries.filter(function (e) { return !s.marks[e.id]; });
+      h += '<div class="card" style="padding:12px"><div class="gamename" style="font-size:16px">Whose ball is this?</div>' +
+        '<div class="row wrap" style="margin-top:8px">' +
+        unmeasured.map(function (e) {
+          return '<button class="btn small" data-assign="' + e.id + '">' + entryDotHTML(game, e.id) + esc(e.name) + '</button>';
+        }).join('') +
+        '<button class="btn small ghost" id="measureCancelBall">Not a ball — cancel</button></div></div>';
+    }
+    const measured = game.entries.filter(function (e) { return s.marks[e.id]; });
+    if (measured.length) {
+      h += '<div class="card" style="padding:8px 12px"><table class="stand">';
+      measured.forEach(function (e) {
+        h += '<tr><td>' + entryDotHTML(game, e.id) + esc(e.name) + '</td><td class="num"><b>' + fmtDist(s.marks[e.id].dist) + '</b></td>' +
+          '<td class="num"><button class="btn small secondary" data-redomark="' + e.id + '">Redo</button></td></tr>';
+      });
+      h += '</table></div>';
+    }
+    const left = game.entries.length - measured.length;
+    h += '<p class="note">' + (left
+        ? left + (left === 1 ? ' entry' : ' entries') + ' still to measure — or save now and type the rest in on the play screen.'
+        : 'Everyone is measured.') + '</p>' +
+      '<button class="btn block" id="measureSave"' + (measured.length ? '' : ' disabled') + '>Save distances</button>' +
+      '<div class="row wrap"><button class="btn ghost small" id="measureRestartCal">Redo calibration</button>' +
+      '<button class="btn ghost small" id="measureNewPhoto">Use a different photo</button></div>';
+    return h;
+  }
+  SCREENS.measure = function () {
+    const s = measureSession;
+    if (!s) return navRowHTML(false) + '<p class="empty">Measure session ended.</p>';
+    const game = measureGame();
+    let h = navRowHTML(true) + '<h1>📏 Camera measure</h1>';
+    if (s.mode === 'contest' && game) {
+      h += '<p class="note" style="margin-top:-6px">Measuring <b>' + esc(displayName(game)) + '</b> — nothing is written to the game until you tap <b>Save distances</b>.</p>';
+    }
+    if (!s.photo) {
+      h += '<div class="card"><p style="margin-top:0">Photograph the flat surface where things landed — the board, the deck, the green — ' +
+        'with a known-size rectangle in the shot: a cornhole board, a credit card, a sheet of letter paper, or any rectangle whose size you know.</p>' +
+        '<p class="note">You’ll tap the rectangle’s 4 corners to calibrate, then tap points on that same flat surface to read real distances. ' +
+        'With careful corner taps the results are good to about half an inch. The photo itself is never saved — it’s gone when you leave this screen.</p>' +
+        '<label class="btn block" for="measureFile" style="margin-bottom:0">📷 Take or choose a photo</label>' +
+        '<input type="file" id="measureFile" accept="image/*" capture="environment" class="hidden"></div>';
+      return h;
+    }
+    h += '<h2 style="margin-top:6px">1 · Calibrate</h2>' +
+      '<p class="note" style="margin:2px 0 6px">Which rectangle is in the photo?</p>' +
+      '<div class="seg" id="measureRefs">' +
+      E.MEASURE_REFS.map(function (r) {
+        return '<button type="button" data-ref="' + r.id + '"' + (s.refId === r.id ? ' class="on"' : '') + '>' + esc(r.name) +
+          '<small style="display:block;font-weight:600;font-size:12.5px;opacity:.8">' + r.w + '″ × ' + r.h + '″</small></button>';
+      }).join('') +
+      '<button type="button" data-ref="custom"' + (s.refId === 'custom' ? ' class="on"' : '') + '>Custom size</button></div>';
+    if (s.refId === 'custom') {
+      h += '<div class="entryrow"><input type="text" id="measureCustomW" inputmode="decimal" placeholder="Width (inches)" value="' + esc(s.customW) + '" aria-label="Custom width in inches">' +
+        '<input type="text" id="measureCustomH" inputmode="decimal" placeholder="Height (inches)" value="' + esc(s.customH) + '" aria-label="Custom height in inches"></div>' +
+        '<p class="note" style="margin-top:0">Width is the edge between the first two corners you’ll tap (top-left → top-right).</p>';
+    }
+    h += measureStageHTML();
+    h += measureControlsHTML();
+    return h;
+  };
+  function setMarkPoint(ref, fx, fy, el) {
+    const s = measureSession;
+    if (!s) return;
+    fx = Math.min(1, Math.max(0, fx)); fy = Math.min(1, Math.max(0, fy));
+    const parts = ref.split(':');
+    if (parts[0] === 'corner') s.corners[parseInt(parts[1], 10)] = { fx: fx, fy: fy };
+    else if (parts[0] === 'target') s.target = { fx: fx, fy: fy };
+    else if (parts[0] === 'pendingA') s.pendingA = { fx: fx, fy: fy };
+    else if (parts[0] === 'pendingBall') s.pendingBall = { fx: fx, fy: fy };
+    else if (parts[0] === 'pairA' && s.pairs[parseInt(parts[1], 10)]) s.pairs[parseInt(parts[1], 10)].a = { fx: fx, fy: fy };
+    else if (parts[0] === 'pairB' && s.pairs[parseInt(parts[1], 10)]) s.pairs[parseInt(parts[1], 10)].b = { fx: fx, fy: fy };
+    else if (parts[0] === 'ball' && s.marks[parts[1]]) { s.marks[parts[1]].fx = fx; s.marks[parts[1]].fy = fy; }
+    if (el) { el.style.left = (fx * 100) + '%'; el.style.top = (fy * 100) + '%'; }
+  }
+  BINDS.measure = function () {
+    const s = measureSession;
+    bindNavRow(function () {
+      // Back leaves WITHOUT saving (contest): the photo and any
+      // unsaved marks are discarded, exactly as the screen promises.
+      const g = measureGame();
+      measureSession = null;
+      if (s && s.mode === 'contest' && g) go('play', g.id);
+      else go('home');
+    });
+    if (!s) return;
+    const file = document.getElementById('measureFile');
+    if (file) file.addEventListener('change', function () {
+      if (file.files && file.files[0]) loadMeasurePhoto(file.files[0]);
+    });
+    document.querySelectorAll('#measureRefs [data-ref]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        s.refId = b.getAttribute('data-ref');
+        recomputeMeasure();
+        render();
+      });
+    });
+    const cw = document.getElementById('measureCustomW'), ch = document.getElementById('measureCustomH');
+    if (cw) cw.addEventListener('change', function () { s.customW = cw.value; recomputeMeasure(); render(); });
+    if (ch) ch.addEventListener('change', function () { s.customH = ch.value; recomputeMeasure(); render(); });
+    const stage = document.getElementById('measureStage');
+    if (stage) {
+      stage.addEventListener('click', function (ev) {
+        // Taps on markers are drags/edits, not new points; and the
+        // click that trails a finished drag must not plant a point.
+        if (ev.target && ev.target.closest && ev.target.closest('[data-mark]')) return;
+        if (Date.now() - measureDragEndedAt < 350) return;
+        const r = stage.getBoundingClientRect();
+        if (!r.width || !r.height) return;
+        measureTapAt((ev.clientX - r.left) / r.width, (ev.clientY - r.top) / r.height);
+      });
+      stage.querySelectorAll('[data-mark]').forEach(function (mk) {
+        mk.addEventListener('pointerdown', function (ev) {
+          if (ev.button !== undefined && ev.button !== 0) return;
+          if (ev.preventDefault) ev.preventDefault();
+          if (ev.stopPropagation) ev.stopPropagation();
+          const ref = mk.getAttribute('data-mark');
+          const move = function (e2) {
+            const r = stage.getBoundingClientRect();
+            if (!r.width || !r.height) return;
+            setMarkPoint(ref, (e2.clientX - r.left) / r.width, (e2.clientY - r.top) / r.height, mk);
+          };
+          const up = function () {
+            document.removeEventListener('pointermove', move);
+            document.removeEventListener('pointerup', up);
+            measureDragEndedAt = Date.now();
+            recomputeMeasure();
+            render();
+          };
+          document.addEventListener('pointermove', move);
+          document.addEventListener('pointerup', up);
+        });
+      });
+    }
+    const undo = document.getElementById('measureUndoCorner');
+    if (undo) undo.addEventListener('click', function () { s.corners.pop(); s.calibError = ''; recomputeMeasure(); render(); });
+    const restart = document.getElementById('measureRestartCal');
+    if (restart) restart.addEventListener('click', function () {
+      s.corners = []; s.H = null; s.swapped = false; s.calibError = '';
+      s.target = null; s.pendingBall = null; s.marks = {}; s.pairs = []; s.pendingA = null;
+      render();
+    });
+    const newPhoto = document.getElementById('measureNewPhoto');
+    if (newPhoto) newPhoto.addEventListener('click', function () {
+      s.photo = null; s.corners = []; s.H = null; s.swapped = false; s.calibError = '';
+      s.target = null; s.pendingBall = null; s.marks = {}; s.pairs = []; s.pendingA = null;
+      render();
+    });
+    const units = document.getElementById('measureUnits');
+    if (units) units.addEventListener('click', function () { s.units = s.units === 'cm' ? 'in' : 'cm'; render(); });
+    const cancelPair = document.getElementById('measureCancelPair');
+    if (cancelPair) cancelPair.addEventListener('click', function () { s.pendingA = null; render(); });
+    document.querySelectorAll('[data-delpair]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        s.pairs.splice(parseInt(b.getAttribute('data-delpair'), 10), 1);
+        render();
+      });
+    });
+    document.querySelectorAll('[data-assign]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        const id = b.getAttribute('data-assign');
+        if (s.pendingBall && !s.marks[id]) {
+          s.marks[id] = { fx: s.pendingBall.fx, fy: s.pendingBall.fy, dist: measureDistTo(s.pendingBall) };
+          s.pendingBall = null;
+        }
+        render();
+      });
+    });
+    const cancelBall = document.getElementById('measureCancelBall');
+    if (cancelBall) cancelBall.addEventListener('click', function () { s.pendingBall = null; render(); });
+    document.querySelectorAll('[data-redomark]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        delete s.marks[b.getAttribute('data-redomark')];
+        render();
+      });
+    });
+    const saveBtn = document.getElementById('measureSave');
+    if (saveBtn) saveBtn.addEventListener('click', function () {
+      const g = measureGame();
+      if (!g) return;
+      Object.keys(s.marks).forEach(function (id) {
+        const e = g.entries.find(function (x) { return x.id === id; });
+        const m = s.marks[id];
+        if (e && m.dist !== null && m.dist !== undefined) e.total = Math.round(m.dist * 10) / 10;
+      });
+      save();
+      measureSession = null;
+      go('play', g.id);
+    });
+  };
+  /* Test seam (same pattern as shellVersionGuard): jsdom has no
+     camera or file picker, so tests inject a synthetic photo and
+     drive taps as fractions — both land in the exact functions the
+     real file input and stage clicks use. */
+  window.CruiseGameScoring.measureInjectPhoto = function (photo) {
+    if (!measureSession) measureSession = newMeasureSession('free', null);
+    setMeasurePhoto(photo);
+    if (screen.name !== 'measure') go('measure');
+  };
+  window.CruiseGameScoring.measureTap = function (fx, fy) { measureTapAt(fx, fy); };
+  window.CruiseGameScoring.measureState = function () { return measureSession; };
+  window.CruiseGameScoring.fmtDist = fmtDist;
 
   /* ----- Quick Score round summary -----
      Shown when a round ends. Staff see who advanced / the running
@@ -2450,22 +3023,27 @@
 
   /* ----- Game settings (in-game editor) ----- */
   function showGameSettings(game) {
+    const isMeasure = game.scoreMode === 'measure';
     openModal('<h2 style="margin-top:0">Game settings — ' + esc(displayName(game)) + '</h2>' +
       '<label class="field"><span>Game label (optional)</span>' +
       '<input type="text" id="gsLabel" value="' + esc(game.label || '') + '" placeholder="e.g. Soccer Shootout — Day 1" maxlength="60"></label>' +
-      '<p class="note">Change the label or the scoring rules for this game. Scores already entered stay as they are.</p>' +
-      '<div id="gsWrap">' + defEditorHTML(game.def, 'gs') + '</div>' +
+      (isMeasure
+        ? '<p class="note">Closest Wins games are scored by measured distance — there are no scoring buttons or points to edit. Only the label can change here.</p>'
+        : '<p class="note">Change the label or the scoring rules for this game. Scores already entered stay as they are.</p>' +
+          '<div id="gsWrap">' + defEditorHTML(game.def, 'gs') + '</div>') +
       '<button class="btn block" id="gsSave">Save settings</button>' +
       '<button class="btn ghost block" id="gsCancel">Cancel</button>');
-    const rerender = function (def) {
-      document.getElementById('gsWrap').innerHTML = defEditorHTML(def, 'gs');
+    if (!isMeasure) {
+      const rerender = function (def) {
+        document.getElementById('gsWrap').innerHTML = defEditorHTML(def, 'gs');
+        bindDefEditor('gs', rerender);
+      };
       bindDefEditor('gs', rerender);
-    };
-    bindDefEditor('gs', rerender);
+    }
     document.getElementById('gsCancel').addEventListener('click', closeModal);
     document.getElementById('gsSave').addEventListener('click', function () {
       game.label = document.getElementById('gsLabel').value.trim();
-      game.def = readDefEditor('gs');
+      if (!isMeasure) game.def = readDefEditor('gs');
       save(); closeModal(); render();
     });
   }
@@ -2669,7 +3247,7 @@
       if (qsActive(game) && game.qsRounds.rounds.length) return qsFinalStandings(game);
       return quickSorted(game).map(function (e) {
         const sc = quickScore(game, e);
-        return { id: e.id, name: e.name, cabin: e.cabin, color: entryColorNameInGame(game, e), line: (sc === null ? '—' : sc + ' pts') };
+        return { id: e.id, name: e.name, cabin: e.cabin, color: entryColorNameInGame(game, e), line: (sc === null ? '—' : game.scoreMode === 'measure' ? fmtDist(sc) : sc + ' pts') };
       });
     }
     if (game.format === 'rr') {
