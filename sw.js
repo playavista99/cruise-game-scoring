@@ -1,7 +1,7 @@
 /* Offline shell cache for the Cruise Game Scoring App.
    The app itself stores all data in localStorage; this worker only
    caches the static shell so the app opens with no connection. */
-const CACHE = 'cgsa-shell-v25';
+const CACHE = 'cgsa-shell-v26';
 const SHELL = [
   './',
   './index.html',
@@ -11,7 +11,10 @@ const SHELL = [
   './qr.js',
   './app.js',
   './manifest.webmanifest',
-  './icon.svg'
+  './icon.svg',
+  './icon-192.png',
+  './icon-512.png',
+  './icon-maskable-512.png'
 ];
 
 self.addEventListener('install', (event) => {
