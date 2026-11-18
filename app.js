@@ -7,6 +7,30 @@
   'use strict';
   const E = window.Engines;
 
+  /* The running build's version. This is the code's single source of
+     truth; version.json (checked over the network), the menu fallback
+     line in index.html, and the service-worker cache name are bumped
+     alongside it on every release — see the README release checklist. */
+  const APP_VERSION = '1.9';
+  const UPDATE_FLAG_KEY = 'cgsa-just-updated';
+  function parseVersion(v) {
+    return String(v === null || v === undefined ? '' : v).trim().replace(/^v/i, '').split('.').map(function (part) {
+      const n = parseInt(part, 10);
+      return Number.isFinite(n) && n > 0 ? n : 0;
+    });
+  }
+  function compareVersions(a, b) {
+    const aa = parseVersion(a);
+    const bb = parseVersion(b);
+    const len = Math.max(aa.length, bb.length);
+    for (let i = 0; i < len; i++) {
+      const diff = (aa[i] || 0) - (bb[i] || 0);
+      if (diff !== 0) return diff;
+    }
+    return 0;
+  }
+  window.CruiseGameScoring = { APP_VERSION: APP_VERSION, compareVersions: compareVersions };
+
   /* ---------------- built-in templates ---------------- */
   const BUILTINS = [
     { id: 'builtin-soccer', name: 'Soccer Shootout', icon: '⚽', color: '#16a34a', attempts: 5, winDir: 'high', builtin: true,
@@ -3134,7 +3158,11 @@
     menuBtn.addEventListener('click', function (ev) {
       ev.stopPropagation();
       const willOpen = menuPanel.classList.contains('hidden');
-      if (willOpen) { menuPanel.classList.remove('hidden'); menuBtn.setAttribute('aria-expanded', 'true'); }
+      if (willOpen) {
+        menuPanel.classList.remove('hidden');
+        menuBtn.setAttribute('aria-expanded', 'true');
+        checkForUpdates();
+      }
       else closeMenu();
     });
     document.addEventListener('click', function (ev) {
@@ -3142,6 +3170,168 @@
     });
     document.addEventListener('keydown', function (ev) { if (ev.key === 'Escape') closeMenu(); });
   }
+  /* ----- App version + in-app update check -----
+     version.json is the published version marker. Checking is a plain
+     no-store fetch, so it works in an ordinary browser tab as well as
+     in the installed PWA. Failing to fetch is normal on ship Wi-Fi and
+     is reported as a soft "can't check" line, never as an error. */
+  const menuVersionText = document.getElementById('menuVersionText');
+  const updateStatus = document.getElementById('updateStatus');
+  const checkUpdatesBtn = document.getElementById('checkUpdatesBtn');
+  const updateNowBtn = document.getElementById('updateNowBtn');
+  if (menuVersionText) menuVersionText.textContent = 'Version ' + APP_VERSION;
+  let updateCheckInFlight = false;
+  let updateRemoteVersion = null;
+  let updateInProgress = false;
+
+  function setUpdateStatus(text) {
+    if (updateStatus) updateStatus.textContent = text || '';
+  }
+  function showUpdateButton(show) {
+    if (!updateNowBtn) return;
+    updateNowBtn.classList.toggle('hidden', !show);
+  }
+  function justUpdatedFlag() {
+    try { return window.sessionStorage.getItem(UPDATE_FLAG_KEY) === '1'; } catch (e) { return false; }
+  }
+  function setJustUpdatedFlag() {
+    try { window.sessionStorage.setItem(UPDATE_FLAG_KEY, '1'); } catch (e) { /* private mode: the note is a nicety */ }
+  }
+  function clearJustUpdatedFlag() {
+    try { window.sessionStorage.removeItem(UPDATE_FLAG_KEY); } catch (e) { /* nothing to clear */ }
+  }
+  function checkForUpdates() {
+    if (updateCheckInFlight) return Promise.resolve(false);
+    updateCheckInFlight = true;
+    if (checkUpdatesBtn) {
+      checkUpdatesBtn.disabled = true;
+      checkUpdatesBtn.textContent = 'Checking…';
+    }
+    const url = 'version.json?cb=' + Date.now();
+    return Promise.resolve().then(function () {
+      return fetch(url, { cache: 'no-store' });
+    }).then(function (res) {
+      if (!res || !res.ok) throw new Error('version check failed');
+      return res.json();
+    }).then(function (data) {
+      const remote = data && data.version !== null && data.version !== undefined ? String(data.version).trim() : '';
+      if (!remote || !/^\d+(?:\.\d+)*$/.test(remote)) throw new Error('version check failed');
+      updateRemoteVersion = remote;
+      const cmp = compareVersions(remote, APP_VERSION);
+      if (cmp > 0) {
+        setUpdateStatus('Update available: v' + remote);
+        showUpdateButton(true);
+      } else if (cmp === 0 && justUpdatedFlag()) {
+        setUpdateStatus('Updated — you\'re on the latest version ✓');
+        showUpdateButton(false);
+        clearJustUpdatedFlag();
+      } else {
+        setUpdateStatus('You\'re up to date ✓');
+        showUpdateButton(false);
+      }
+      return true;
+    }).catch(function () {
+      updateRemoteVersion = null;
+      setUpdateStatus('Can\'t check right now — you may be offline.');
+      showUpdateButton(false);
+      return false;
+    }).then(function (result) {
+      updateCheckInFlight = false;
+      if (checkUpdatesBtn) {
+        checkUpdatesBtn.disabled = false;
+        checkUpdatesBtn.textContent = 'Check for updates';
+      }
+      return result;
+    });
+  }
+  if (checkUpdatesBtn) checkUpdatesBtn.addEventListener('click', function () { checkForUpdates(); });
+
+  function reloadApp() {
+    /* A test hook lets the jsdom suite stub the reload (jsdom's
+       Location.reload is not writable); real browsers never set it. */
+    if (typeof window.__cgsaReload === 'function') { window.__cgsaReload(); return; }
+    window.location.reload();
+  }
+  function deleteShellCaches() {
+    if (!('caches' in window) || !window.caches) return Promise.resolve(false);
+    return window.caches.keys().then(function (keys) {
+      return Promise.all(keys.filter(function (k) { return k.indexOf('cgsa-shell') === 0; })
+        .map(function (k) { return window.caches.delete(k); }));
+    }).then(function () { return true; });
+  }
+  function performUpdate() {
+    if (updateInProgress) return Promise.resolve(false);
+    updateInProgress = true;
+    if (updateNowBtn) updateNowBtn.disabled = true;
+    setJustUpdatedFlag();
+    let reloaded = false;
+    let fallbackTimer = null;
+    let swEvents = null;
+    function reloadOnce() {
+      if (reloaded) return;
+      reloaded = true;
+      if (fallbackTimer) clearTimeout(fallbackTimer);
+      if (swEvents && typeof swEvents.remove === 'function') swEvents.remove();
+      reloadApp();
+    }
+    function getRegistration() {
+      if (!('serviceWorker' in navigator) || !navigator.serviceWorker ||
+          typeof navigator.serviceWorker.getRegistration !== 'function') {
+        return Promise.resolve(null);
+      }
+      return navigator.serviceWorker.getRegistration().catch(function () { return null; });
+    }
+    return getRegistration().then(function (registration) {
+      let chain = Promise.resolve();
+      if (registration) {
+        if (typeof navigator.serviceWorker.addEventListener === 'function') {
+          const onControllerChange = function () { reloadOnce(); };
+          navigator.serviceWorker.addEventListener('controllerchange', onControllerChange);
+          swEvents = {
+            remove: function () {
+              if (typeof navigator.serviceWorker.removeEventListener === 'function') {
+                navigator.serviceWorker.removeEventListener('controllerchange', onControllerChange);
+              }
+            }
+          };
+        }
+        fallbackTimer = setTimeout(reloadOnce, 1200);
+        if (typeof registration.update === 'function') {
+          chain = Promise.resolve().then(function () { return registration.update(); }).catch(function () { /* reload anyway */ });
+        }
+      }
+      return chain.then(function () {
+        return deleteShellCaches().catch(function () { /* reload anyway */ });
+      }).then(function () {
+        if (registration) {
+          if (registration.waiting && typeof registration.waiting.postMessage === 'function') {
+            try { registration.waiting.postMessage({ type: 'SKIP_WAITING' }); } catch (e) { /* fallback reload covers it */ }
+          }
+          /* The controllerchange listener or the fallback timer reloads. */
+        } else {
+          reloadOnce();
+        }
+        return true;
+      });
+    }).catch(function () {
+      reloadOnce();
+      return true;
+    }).then(function (result) {
+      if (updateNowBtn) updateNowBtn.disabled = false;
+      if (!reloaded) {
+        /* A service-worker update is still settling; the pending
+           controllerchange/fallback owns the reload and the flag. */
+        updateInProgress = true;
+      } else {
+        updateInProgress = false;
+      }
+      return result;
+    });
+  }
+  if (updateNowBtn) updateNowBtn.addEventListener('click', function () { performUpdate(); });
+  window.CruiseGameScoring.checkForUpdates = checkForUpdates;
+  window.CruiseGameScoring.performUpdate = performUpdate;
+
   // WhatsApp entry: shown only when an invite link is configured in config.js.
   (function () {
     const wa = document.getElementById('menuWhatsappBtn');
