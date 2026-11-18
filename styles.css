@@ -206,6 +206,9 @@ input.nameedit { min-height: 44px; padding: 8px 10px; }
 .fb-thanks .thanks-ic { font-size: 42px; }
 .fb-thanks h2 { margin: 8px 0 4px; }
 
+/* ----- Playoff field (v1.6) ----- */
+.seedno { font-weight: 800; font-size: 19px; min-width: 30px; text-align: center; color: #0b3b5e; }
+
 /* ----- Share / QR panel ----- */
 .qrbox { display: flex; justify-content: center; padding: 10px 0 4px; }
 .qrbox svg { display: block; width: min(264px, 72vw); height: auto; }
