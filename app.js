@@ -39,6 +39,7 @@
   if (!S || typeof S !== 'object') S = { templates: [], games: [] };
   if (!Array.isArray(S.templates)) S.templates = [];
   if (!Array.isArray(S.games)) S.games = [];
+  if (!Array.isArray(S.setups)) S.setups = [];
   function save() { try { localStorage.setItem(LS_KEY, JSON.stringify(S)); } catch (e) { /* storage full/blocked */ } }
 
   function allTemplates() { return BUILTINS.concat(S.templates); }
@@ -76,8 +77,30 @@
   }
   function entryColorById(game, id) {
     if (!game || !id) return null;
+    if (game.useColors === false) return null; // colors are a setup choice (v1.7)
     const e = game.entries.find(function (x) { return x.id === id; });
     return e ? entryColor(game.entries, e) : null;
+  }
+  /* Player colors are opt-in at setup (v1.7): game.useColors === false
+     means no color UI anywhere for that game. Games saved before the
+     choice existed have no flag — treat missing as ON so their look
+     never changes. All color display funnels through these helpers
+     (entryColorById above, entryDotHTML / nameWithDotHTML below, and
+     entryColorInGame for the spots that hold an entry object), so
+     gating here gates every screen at once. */
+  function colorsOn(game) { return !game || game.useColors !== false; }
+  function entryColorInGame(game, e) {
+    return colorsOn(game) ? entryColor(game.entries, e) : null;
+  }
+  function entryColorNameInGame(game, e) {
+    const c = entryColorInGame(game, e);
+    return c ? c.name : '';
+  }
+  // The name a game is shown under: its optional label ("Soccer
+  // Shootout — Day 1") when one is set, else the base game name.
+  function displayName(game) {
+    const l = game && game.label ? String(game.label).trim() : '';
+    return l || (game ? game.name : '');
   }
   function colorDotHTML(color) {
     if (!color) return '';
@@ -207,10 +230,23 @@
       h += '<h2>In progress</h2>';
       inProgress.slice().reverse().forEach(function (g) {
         h += '<div class="card row"><div>' + badge(g) + '</div><div class="grow">' +
-          '<div class="gamename">' + esc(g.name) + '</div>' +
+          '<div class="gamename">' + esc(displayName(g)) + '</div>' +
           '<div class="sub">' + esc(formatLabel(g)) + ' · ' + g.entries.length + ' ' + (g.entryKind === 'teams' ? 'teams' : 'players') + ' · ' + fmtDate(g.createdAt) + '</div></div>' +
           '<button class="btn small" data-continue="' + g.id + '">Continue</button></div>';
       });
+    }
+    if (S.setups.length) {
+      h += '<h2>Saved setups</h2>';
+      S.setups.slice().reverse().forEach(function (p) {
+        const t = getTemplate(p.templateId);
+        h += '<div class="card row"' + (t ? '' : ' style="opacity:.55"') + '>' +
+          (t ? '<div>' + badge(t) + '</div>' : '') +
+          '<div class="grow"><div class="gamename">' + esc(p.name) + '</div>' +
+          '<div class="sub">' + (t ? esc(presetSummary(p)) : 'Game template no longer exists') + '</div></div>' +
+          (t ? '<button class="btn small" data-startpreset="' + p.id + '">▶ Start</button>' : '') +
+          '<button class="btn small danger" data-delpreset="' + p.id + '">Delete</button></div>';
+      });
+      h += '<p class="note">A saved setup launches straight to sign-up with its game, rules, format, rounds, colors and label — players are signed up fresh each time.</p>';
     }
     h += '<div class="row wrap" style="margin-top:14px">' +
       '<button class="btn secondary grow" id="historyBtn">🏆 History' + (finished.length ? ' (' + finished.length + ')' : '') + '</button>' +
@@ -219,7 +255,18 @@
     h += '<button class="btn feedbackbtn block" id="homeFeedbackBtn" style="margin-top:18px">✉️ Send feedback</button>';
     return h;
   };
+  // Saved-setup delete uses the same two-step in-app confirm as
+  // history delete (native confirm() is suppressed in some browsers).
+  let presetDelArmId = null, presetDelArmTimer = null;
+  function disarmPresetDel() {
+    presetDelArmId = null;
+    if (presetDelArmTimer) { clearTimeout(presetDelArmTimer); presetDelArmTimer = null; }
+    document.querySelectorAll('[data-delpreset]').forEach(function (x) {
+      x.textContent = 'Delete'; x.classList.remove('confirming');
+    });
+  }
   BINDS.home = function () {
+    disarmPresetDel(); // every fresh render starts disarmed
     document.getElementById('newGameBtn').addEventListener('click', function () { go('pick'); });
     document.getElementById('homeFeedbackBtn').addEventListener('click', function () { openFeedback(); });
     document.getElementById('historyBtn').addEventListener('click', function () { go('history'); });
@@ -231,6 +278,28 @@
         // not into a half-started next round.
         if (g && qsActive(g) && g.qsRounds.betweenRounds) go('roundSummary', g.id);
         else go('play', b.getAttribute('data-continue'));
+      });
+    });
+    document.querySelectorAll('[data-startpreset]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        const p = S.setups.find(function (x) { return x.id === b.getAttribute('data-startpreset'); });
+        if (p) startPreset(p);
+      });
+    });
+    document.querySelectorAll('[data-delpreset]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        const id = b.getAttribute('data-delpreset');
+        if (presetDelArmId === id) {
+          disarmPresetDel();
+          S.setups = S.setups.filter(function (x) { return x.id !== id; });
+          save(); render();
+          return;
+        }
+        disarmPresetDel();
+        presetDelArmId = id;
+        b.textContent = 'Confirm delete?';
+        b.classList.add('confirming');
+        presetDelArmTimer = setTimeout(disarmPresetDel, 4000);
       });
     });
   };
@@ -271,9 +340,101 @@
       format: 'quick', entryKind: 'individuals', scoreMode: 'tap',
       elim: 'single', rrGames: '2', rrPairing: 'preset', playoffSize: '0', playoffElim: 'single',
       qsRoundsOn: 'off', qsMode: 'cumulative', qsPlanned: [''], qsPlannedParsed: null,
+      // Colors are a setup choice (v1.7): Bean Bag Toss defaults ON
+      // (the bags themselves are colored), every other game OFF.
+      useColors: templateId === 'builtin-beanbag',
+      label: '',
       entries: []
     };
     go('setup');
+  }
+
+  /* ----- Saved setups (presets, v1.7) -----
+     A preset captures a full setup-screen configuration — base game,
+     (possibly edited) scoring rules, format and its options, Quick
+     Score rounds plan, the colors choice and the label — so a crew
+     member can launch the same game again in two taps. Players are
+     NEVER stored: starting a preset builds a fresh draft from the
+     config and goes straight to sign-up. Presets live in the same
+     on-device localStorage store as templates and history; they are
+     deliberately NOT synced through Supabase (that would need a new
+     cloud table — out of scope). */
+  function parseQsPlannedStrings(strings) {
+    const parsed = strings.map(function (s) {
+      const t = String(s).trim();
+      if (t === '') return null;
+      const n = parseNum(t, -1);
+      return n < 0 ? null : n;
+    });
+    while (parsed.length && parsed[parsed.length - 1] === null) parsed.pop();
+    return parsed;
+  }
+  function formatShim(o) {
+    // Just enough shape for formatLabel()/qsActive() to describe a
+    // draft or a preset the way they describe a game.
+    return {
+      format: o.format, elim: o.elim, rrPairing: o.rrPairing,
+      qsRounds: o.qsRoundsOn === 'on' ? { mode: o.qsMode } : null
+    };
+  }
+  function presetFromDraft(name) {
+    return {
+      id: E.uid('set'), name: name, createdAt: Date.now(),
+      templateId: draft.templateId, def: clone(draft.def),
+      format: draft.format, entryKind: draft.entryKind, scoreMode: draft.scoreMode,
+      elim: draft.elim, rrGames: String(draft.rrGames), rrPairing: draft.rrPairing,
+      playoffSize: String(draft.playoffSize), playoffElim: draft.playoffElim,
+      qsRoundsOn: draft.qsRoundsOn, qsMode: draft.qsMode, qsPlanned: draft.qsPlanned.slice(),
+      useColors: !!draft.useColors, label: draft.label || ''
+    };
+  }
+  function presetSummary(p) {
+    const t = getTemplate(p.templateId);
+    return (t ? t.name : 'Missing game') + ' · ' + formatLabel(formatShim(p)) +
+      (p.label ? ' · “' + p.label + '”' : '');
+  }
+  function startPreset(p) {
+    if (!getTemplate(p.templateId)) return; // blocked in the UI; defensive
+    draft = {
+      templateId: p.templateId, def: clone(p.def),
+      format: p.format, entryKind: p.entryKind, scoreMode: p.scoreMode,
+      elim: p.elim, rrGames: p.rrGames, rrPairing: p.rrPairing,
+      playoffSize: p.playoffSize, playoffElim: p.playoffElim,
+      qsRoundsOn: p.qsRoundsOn, qsMode: p.qsMode,
+      qsPlanned: (p.qsPlanned && p.qsPlanned.length ? p.qsPlanned : ['']).slice(),
+      qsPlannedParsed: null,
+      useColors: !!p.useColors, label: p.label || '',
+      entries: []
+    };
+    if (draft.format === 'quick' && draft.qsRoundsOn === 'on') {
+      draft.qsPlannedParsed = parseQsPlannedStrings(draft.qsPlanned);
+    }
+    go('signup');
+  }
+  function openSaveSetup() {
+    const t = getTemplate(draft.templateId);
+    const suggestion = draft.label || ((t ? t.name : 'Game') + ' — ' + formatLabel(formatShim(draft)));
+    openModal('<h2 style="margin-top:0">💾 Save these settings</h2>' +
+      '<p class="note">Save this setup — game, scoring rules, format, rounds, colors and label — so you can launch it again from the home screen. Players are not saved; they sign up fresh each time.</p>' +
+      '<label class="field"><span>Setup name</span><input type="text" id="presetName" value="' + esc(suggestion) + '" maxlength="60"></label>' +
+      '<button class="btn block" id="presetSave">Save setup</button>' +
+      '<button class="btn ghost block" id="presetCancel">Cancel</button>');
+    document.getElementById('presetCancel').addEventListener('click', closeModal);
+    document.getElementById('presetSave').addEventListener('click', function () {
+      const name = document.getElementById('presetName').value.trim();
+      if (!name) { alert('Give the setup a name first.'); return; }
+      S.setups.push(presetFromDraft(name));
+      save();
+      closeModal();
+      const btn = document.getElementById('saveSetupBtn');
+      if (btn) {
+        const old = btn.textContent;
+        btn.textContent = '✓ Saved — find it on the home screen';
+        setTimeout(function () { btn.textContent = old; }, 2500);
+      }
+    });
+    const inp = document.getElementById('presetName');
+    if (inp) { inp.focus(); if (inp.select) inp.select(); }
   }
 
   /* ----- My games (templates) ----- */
@@ -480,6 +641,9 @@
     let h = '<h1>Set up: ' + esc(t.name) + '</h1>' +
       '<div class="card row"><div>' + badge(t) + '</div><div class="grow"><div class="gamename">' + esc(t.name) + '</div>' +
       '<div class="sub">Scoring rules below start from the template — change anything for this game only.</div></div></div>' +
+      '<label class="field"><span>Game label (optional)</span>' +
+      '<input type="text" id="suLabel" value="' + esc(draft.label || '') + '" placeholder="e.g. Soccer Shootout — Day 1" maxlength="60"></label>' +
+      '<p class="note">A label names THIS game — “Soccer Shootout Tournament”, “Day 2 rematch” — and shows wherever the game’s name appears. Blank keeps the plain game name.</p>' +
       '<div id="setupDefWrap">' + defEditorHTML(draft.def, 'su') + '</div>' +
       '<h2>Format</h2>' + segHTML('segFormat', [
         { v: 'quick', label: 'Quick Score' }, { v: 'bracket', label: 'Bracket' }, { v: 'rr', label: 'Round Robin' }], draft.format) +
@@ -487,6 +651,10 @@
         { v: 'individuals', label: 'Individuals' }, { v: 'teams', label: 'Teams' }], draft.entryKind) +
       '<h2>Score entry</h2>' + segHTML('segMode', [
         { v: 'tap', label: 'Tap-by-tap (app adds up)' }, { v: 'total', label: 'Type final total' }], draft.scoreMode) +
+      '<h2>Player colors</h2>' + segHTML('segColors', [
+        { v: 'on', label: 'On — a color for each entry' }, { v: 'off', label: 'Off — no colors' }], draft.useColors ? 'on' : 'off') +
+      '<p class="note">On: every player or team gets a color (Red, Blue, Green, …) shown next to their name at sign-up, in play, in results and in history. ' +
+      'Bean Bag Toss starts with colors on — the bags are colored — everything else starts with them off. Either way it is your choice, here at setup.</p>' +
       '<div id="quickOpts" class="' + (draft.format === 'quick' ? '' : 'hidden') + '">' +
       '<h2>Rounds</h2>' + segHTML('segQsRounds', [
         { v: 'off', label: 'Off — one leaderboard' }, { v: 'on', label: 'On — play in rounds' }], draft.qsRoundsOn) +
@@ -514,6 +682,7 @@
       segHTML('segPlayoffElim', [{ v: 'single', label: 'Single elimination' }, { v: 'double', label: 'Double elimination' }], draft.playoffElim) + '</div>' +
       '</div>' +
       '<button class="btn block" id="toSignup" style="margin-top:18px">Continue to sign-up →</button>' +
+      '<button class="btn secondary block" id="saveSetupBtn">💾 Save these settings</button>' +
       '<button class="btn ghost block" id="setupBack">Back</button>';
     return h;
   };
@@ -532,6 +701,7 @@
     });
     bindSeg('segKind', null, function (v) { draft.entryKind = v; });
     bindSeg('segMode', null, function (v) { draft.scoreMode = v; });
+    bindSeg('segColors', null, function (v) { draft.useColors = (v === 'on'); });
     bindSeg('segQsRounds', null, function (v) {
       draft.qsRoundsOn = v;
       document.getElementById('qsOpts').classList.toggle('hidden', v !== 'on');
@@ -547,29 +717,37 @@
     bindSeg('segPlayoffElim', null, function (v) { draft.playoffElim = v; });
     document.getElementById('setupBack').addEventListener('click', function () { go('pick'); });
     document.getElementById('toSignup').addEventListener('click', function () {
-      draft.def = readDefEditor('su');
-      const rrInput = document.getElementById('rrGames');
-      if (rrInput) draft.rrGames = rrInput.value;
-      if (draft.format === 'quick' && draft.qsRoundsOn === 'on') {
-        draft.qsPlanned = readQsStrings();
-        const parsed = draft.qsPlanned.map(function (s) {
-          const t = String(s).trim();
-          if (t === '') return null;
-          const n = parseNum(t, -1);
-          return n < 0 ? null : n;
-        });
-        while (parsed.length && parsed[parsed.length - 1] === null) parsed.pop();
-        draft.qsPlannedParsed = parsed;
-        if (draft.qsMode === 'advance' && (parsed.length === 0 || parsed[0] === null)) {
-          alert('Advance mode needs a Round 1 target — enter one in the Planned round targets, or switch rounds to Cumulative.');
-          return;
-        }
-      } else {
-        draft.qsPlannedParsed = null;
-      }
+      if (!finalizeDraftFromSetup()) return;
       go('signup');
     });
+    document.getElementById('saveSetupBtn').addEventListener('click', function () {
+      if (!finalizeDraftFromSetup()) return;
+      openSaveSetup();
+    });
   };
+  // Snapshot the setup screen's DOM-held values (scoring rules, games
+  // per entry, label, planned targets) into the draft and compute the
+  // parsed round plan. Returns false — after alerting — when the
+  // config is invalid (Advance rounds without a Round 1 target), so a
+  // saved preset can never hold a config a manual setup would reject.
+  function finalizeDraftFromSetup() {
+    draft.def = readDefEditor('su');
+    const rrInput = document.getElementById('rrGames');
+    if (rrInput) draft.rrGames = rrInput.value;
+    const lbl = document.getElementById('suLabel');
+    if (lbl) draft.label = lbl.value.trim();
+    if (draft.format === 'quick' && draft.qsRoundsOn === 'on') {
+      draft.qsPlanned = readQsStrings();
+      draft.qsPlannedParsed = parseQsPlannedStrings(draft.qsPlanned);
+      if (draft.qsMode === 'advance' && (draft.qsPlannedParsed.length === 0 || draft.qsPlannedParsed[0] === null)) {
+        alert('Advance mode needs a Round 1 target — enter one in the Planned round targets, or switch rounds to Cumulative.');
+        return false;
+      }
+    } else {
+      draft.qsPlannedParsed = null;
+    }
+    return true;
+  }
 
   /* ----- Sign-up ----- */
   function rrPreview(entriesCount) {
@@ -611,16 +789,17 @@
   };
   let signupEditIdx = -1; // sign-up row whose name is being edited inline (-1 = none)
   function entryRowHTML(e, i) {
-    const c = entryColor(draft.entries, e);
+    // Colors off (setup choice): the row is plain — no swatch, no tag.
+    const c = (!draft || draft.useColors !== false) ? entryColor(draft.entries, e) : null;
     const editing = signupEditIdx === i;
     return '<div class="card row" style="margin:6px 0;padding:10px 12px">' +
-      '<button class="colorswatch" data-colorpick="' + i + '" style="background:' + c.hex + '" aria-label="Color: ' + c.name + '. Tap to change"></button>' +
+      (c ? '<button class="colorswatch" data-colorpick="' + i + '" style="background:' + c.hex + '" aria-label="Color: ' + c.name + '. Tap to change"></button>' : '') +
       '<div class="grow">' +
       (editing
         ? '<input type="text" class="nameedit" data-nameinput="' + i + '" value="' + esc(e.name) + '" autocomplete="off" aria-label="Edit name">'
         : '<span class="gamename" style="font-size:16px">' + (i + 1) + '. <span data-nameedit="' + i + '">' + esc(e.name) + '</span></span>' +
           '<button class="editbtn" data-nameedit="' + i + '" aria-label="Edit name">✎</button>') +
-      '<span class="tag">' + c.name + '</span>' +
+      (c ? '<span class="tag">' + c.name + '</span>' : '') +
       (e.cabin ? '<span class="tag">Cabin ' + esc(e.cabin) + '</span>' : '') +
       (e.members ? '<div class="sub">' + esc(e.members) + '</div>' : '') +
       '</div><button class="iconbtn" data-delentry="' + i + '" aria-label="Remove">✕</button></div>';
@@ -680,7 +859,8 @@
       const nm = document.getElementById('newName');
       const name = nm.value.trim();
       if (!name) { nm.focus(); return; }
-      const e = { id: E.uid('e'), name: name, cabin: document.getElementById('newCabin').value.trim(), color: paletteAt(draft.entries.length).name };
+      const e = { id: E.uid('e'), name: name, cabin: document.getElementById('newCabin').value.trim() };
+      if (draft.useColors !== false) e.color = paletteAt(draft.entries.length).name;
       const mem = document.getElementById('newMembers');
       if (mem && mem.value.trim()) e.members = mem.value.trim();
       draft.entries.push(e);
@@ -714,12 +894,17 @@
       id: E.uid('g'), templateId: t.id, name: t.name, icon: t.icon, color: t.color,
       def: clone(draft.def), format: draft.format, entryKind: draft.entryKind,
       scoreMode: draft.scoreMode, elim: draft.elim,
+      useColors: !!draft.useColors, label: (draft.label || '').trim(),
       entries: clone(draft.entries), matches: [], playoffMatches: null, playoffField: null,
       status: 'playing', winnerId: null, createdAt: Date.now(), finishedAt: null
     };
     game.entries.forEach(function (e, i) {
       e.taps = []; e.total = null;
-      if (!colorByName(e.color || '')) e.color = paletteAt(i).name;
+      if (game.useColors) {
+        if (!colorByName(e.color || '')) e.color = paletteAt(i).name;
+      } else {
+        delete e.color; // colors off: entries carry no color at all
+      }
     });
     if (draft.format === 'quick' && draft.qsRoundsOn === 'on') {
       game.qsRounds = {
@@ -877,7 +1062,7 @@
     const qs = game.qsRounds;
     const recs = qs.rounds;
     const row = function (e, line) {
-      return { id: e.id, name: e.name, cabin: e.cabin, color: entryColor(game.entries, e).name, line: line };
+      return { id: e.id, name: e.name, cabin: e.cabin, color: entryColorNameInGame(game, e), line: line };
     };
     if (qs.mode === 'cumulative') {
       return game.entries.slice()
@@ -991,7 +1176,8 @@
     const game = getGame(gameId);
     if (!game) return '<p class="empty">Game not found.</p>';
     let h = '<div class="card row"><div>' + badge(game) + '</div><div class="grow">' +
-      '<div class="gamename">' + esc(game.name) + '</div><div class="sub">' + esc(formatLabel(game)) + ' · ' +
+      '<div class="gamename">' + esc(displayName(game)) + '</div><div class="sub">' +
+      (game.label && String(game.label).trim() ? esc(game.name) + ' · ' : '') + esc(formatLabel(game)) + ' · ' +
       (game.scoreMode === 'tap' ? 'Tap-by-tap scoring' : 'Final-total scoring') + '</div></div>' +
       '<button class="btn small secondary" id="editPlayersBtn">👥 Edit players</button>' +
       '<button class="btn small secondary" id="gameSettingsBtn">⚙ Game settings</button></div>';
@@ -1051,11 +1237,11 @@
     h += '<h2>Leaderboard</h2>';
     sorted.forEach(function (e, i) {
       const sc = quickScore(game, e);
-      const ec = entryColor(game.entries, e);
+      const ec = entryColorInGame(game, e);
       const out = qsIsOut(game, e);
       const cumulative = rounds && game.qsRounds.mode === 'cumulative';
       const bigScore = cumulative ? qsRunningTotal(game, e) : sc;
-      const tint = (!out && game.templateId === 'builtin-beanbag' && game.scoreMode === 'tap')
+      const tint = (!out && ec && game.templateId === 'builtin-beanbag' && game.scoreMode === 'tap')
         ? ';border-left:7px solid ' + ec.hex : '';
       h += '<div class="card' + (out ? ' outcard' : '') + '" style="margin:8px 0;padding:12px' + tint + '"><div class="row spread">' +
         '<div class="grow">' + colorDotHTML(ec) + '<span class="gamename" style="font-size:17px">' + (i + 1) + '. ' + esc(e.name) + '</span>' +
@@ -1116,7 +1302,9 @@
     document.getElementById('walkAdd').addEventListener('click', function () {
       const nm = document.getElementById('walkName');
       if (!nm.value.trim()) { nm.focus(); return; }
-      game.entries.push({ id: E.uid('e'), name: nm.value.trim(), cabin: document.getElementById('walkCabin').value.trim(), color: paletteAt(game.entries.length).name, taps: [], total: null });
+      const e = { id: E.uid('e'), name: nm.value.trim(), cabin: document.getElementById('walkCabin').value.trim(), taps: [], total: null };
+      if (colorsOn(game)) e.color = paletteAt(game.entries.length).name;
+      game.entries.push(e);
       save(); render();
     });
   }
@@ -1133,7 +1321,7 @@
     const rec = qs.rounds[qs.rounds.length - 1];
     const rnum = qs.rounds.length;
     let h = '<div class="card row"><div>' + badge(game) + '</div><div class="grow">' +
-      '<div class="gamename">' + esc(game.name) + '</div><div class="sub">' + esc(formatLabel(game)) + '</div></div></div>';
+      '<div class="gamename">' + esc(displayName(game)) + '</div><div class="sub">' + esc(formatLabel(game)) + '</div></div></div>';
     h += '<h1>Round ' + rnum + ' summary</h1>';
     if (rec.target !== null && rec.target !== undefined) {
       h += '<p class="note">' + (qs.mode === 'advance' ? 'Target to stay in' : 'Pace target') + ': <b>' + rec.target + ' pts</b></p>';
@@ -1546,12 +1734,13 @@
       if (!name) { nm.focus(); return; }
       if (game.playoffMatches) return; // the form is not rendered then; defensive
       const wasComplete = game.rrPairing === 'preset' && rrDone(game);
-      game.entries.push({
+      const walkEntry = {
         id: E.uid('e'), name: name,
         cabin: document.getElementById('rrWalkCabin').value.trim(),
-        color: paletteAt(game.entries.length).name,
         taps: [], total: null
-      });
+      };
+      if (colorsOn(game)) walkEntry.color = paletteAt(game.entries.length).name;
+      game.entries.push(walkEntry);
       if (game.rrPairing === 'preset') {
         const sum = regeneratePresetRR(game);
         game.rrNote = (wasComplete
@@ -1746,7 +1935,7 @@
         '<button class="btn ghost block" id="bvBackBtn">Back to game</button>';
     }
     let h = '<div class="card row"><div>' + badge(game) + '</div><div class="grow">' +
-      '<div class="gamename">' + esc(game.name) + '</div><div class="sub">' + esc(formatLabel(game)) + ' · ' +
+      '<div class="gamename">' + esc(displayName(game)) + '</div><div class="sub">' + esc(formatLabel(game)) + ' · ' +
       (ctx.where === 'po' ? 'Playoff bracket' : 'Bracket') + '</div></div></div>';
     const champ = E.resolveBracket(game.def, ctx.matches);
     if (champ) {
@@ -1872,12 +2061,13 @@
       const nm = document.getElementById('brWalkName');
       const name = nm.value.trim();
       if (!name) { nm.focus(); return; }
-      game.entries.push({
+      const walkEntry = {
         id: E.uid('e'), name: name,
         cabin: document.getElementById('brWalkCabin').value.trim(),
-        color: paletteAt(game.entries.length).name,
         taps: [], total: null
-      });
+      };
+      if (colorsOn(game)) walkEntry.color = paletteAt(game.entries.length).name;
+      game.entries.push(walkEntry);
       const ids = game.entries.map(function (e) { return e.id; });
       game.matches = game.elim === 'double' ? E.buildDoubleElim(ids) : E.buildSingleElim(ids);
       E.resolveBracket(game.def, game.matches);
@@ -1887,8 +2077,10 @@
 
   /* ----- Game settings (in-game editor) ----- */
   function showGameSettings(game) {
-    openModal('<h2 style="margin-top:0">Game settings — ' + esc(game.name) + '</h2>' +
-      '<p class="note">Change the scoring rules for this game. Scores already entered stay as they are.</p>' +
+    openModal('<h2 style="margin-top:0">Game settings — ' + esc(displayName(game)) + '</h2>' +
+      '<label class="field"><span>Game label (optional)</span>' +
+      '<input type="text" id="gsLabel" value="' + esc(game.label || '') + '" placeholder="e.g. Soccer Shootout — Day 1" maxlength="60"></label>' +
+      '<p class="note">Change the label or the scoring rules for this game. Scores already entered stay as they are.</p>' +
       '<div id="gsWrap">' + defEditorHTML(game.def, 'gs') + '</div>' +
       '<button class="btn block" id="gsSave">Save settings</button>' +
       '<button class="btn ghost block" id="gsCancel">Cancel</button>');
@@ -1899,6 +2091,7 @@
     bindDefEditor('gs', rerender);
     document.getElementById('gsCancel').addEventListener('click', closeModal);
     document.getElementById('gsSave').addEventListener('click', function () {
+      game.label = document.getElementById('gsLabel').value.trim();
       game.def = readDefEditor('gs');
       save(); closeModal(); render();
     });
@@ -1951,7 +2144,7 @@
 
   let epSubId = null, epSwapId = null; // entry ids in substitute / swap mode inside the modal
   function epRowHTML(game, e) {
-    const c = entryColor(game.entries, e);
+    const c = entryColorInGame(game, e); // null when colors are off: no swatches
     const kind = game.entryKind === 'teams' ? 'team' : 'player';
     if (epSubId === e.id) {
       return '<div class="card eprow">' +
@@ -1976,7 +2169,7 @@
         '<button class="btn small ghost" id="epSwapCancel">Cancel</button></div></div>';
     }
     return '<div class="card eprow">' +
-      '<div class="row"><button class="colorswatch" data-epcolor="' + e.id + '" style="background:' + c.hex + '" aria-label="Color: ' + c.name + '. Tap to change"></button>' +
+      '<div class="row">' + (c ? '<button class="colorswatch" data-epcolor="' + e.id + '" style="background:' + c.hex + '" aria-label="Color: ' + c.name + '. Tap to change"></button>' : '') +
       '<div class="grow"><input type="text" data-epname="' + e.id + '" value="' + esc(e.name) + '" autocomplete="off" aria-label="Name"></div></div>' +
       '<div class="entryrow" style="margin-top:8px"><input type="text" class="cb" data-epcabin="' + e.id + '" placeholder="Cabin" inputmode="numeric" value="' + esc(e.cabin || '') + '">' +
       (game.entryKind === 'teams' ? '<input type="text" data-epmembers="' + e.id + '" placeholder="Member names" value="' + esc(e.members || '') + '">' : '') +
@@ -1990,7 +2183,7 @@
   function showEditPlayers(game) {
     epSubId = null; epSwapId = null;
     const kind = game.entryKind === 'teams' ? 'team' : 'player';
-    openModal('<h2 style="margin-top:0">👥 Edit players — ' + esc(game.name) + '</h2>' +
+    openModal('<h2 style="margin-top:0">👥 Edit players — ' + esc(displayName(game)) + '</h2>' +
       '<p class="note">Fix a name or cabin, change a color, replace a ' + kind + ' with a substitute, or swap two ' + kind + 's’ places. Scores and matches stay with each slot.</p>' +
       '<div id="epList"></div>' +
       '<button class="btn block" id="epDone">Done</button>');
@@ -2068,9 +2261,11 @@
       const b = sel ? game.entries.find(function (x) { return x.id === sel.value; }) : null;
       if (!a || !b || a === b) { epSwapId = null; renderEpList(game); return; }
       const aName = a.name, bName = b.name;
-      const ca = entryColor(game.entries, a).name, cb = entryColor(game.entries, b).name;
       ['name', 'cabin', 'members'].forEach(function (k) { const t = a[k]; a[k] = b[k]; b[k] = t; });
-      a.color = cb; b.color = ca;
+      if (colorsOn(game)) {
+        const ca = entryColor(game.entries, a).name, cb = entryColor(game.entries, b).name;
+        a.color = cb; b.color = ca;
+      }
       logSub(game, { type: 'swap', aName: aName, bName: bName });
       epSwapId = null;
       save(); render();
@@ -2101,21 +2296,21 @@
       if (qsActive(game) && game.qsRounds.rounds.length) return qsFinalStandings(game);
       return quickSorted(game).map(function (e) {
         const sc = quickScore(game, e);
-        return { id: e.id, name: e.name, cabin: e.cabin, color: entryColor(game.entries, e).name, line: (sc === null ? '—' : sc + ' pts') };
+        return { id: e.id, name: e.name, cabin: e.cabin, color: entryColorNameInGame(game, e), line: (sc === null ? '—' : sc + ' pts') };
       });
     }
     if (game.format === 'rr') {
       return E.computeStandings(game.entries, game.matches, game.def).map(function (r) {
         const e = game.entries.find(function (x) { return x.id === r.id; });
-        return { id: r.id, name: e ? e.name : r.id, cabin: e ? e.cabin : '', color: e ? entryColor(game.entries, e).name : '', line: r.w + 'W–' + r.l + 'L' + (r.d ? '–' + r.d + 'D' : '') + ' · ' + r.pf + ' pts' };
+        return { id: r.id, name: e ? e.name : r.id, cabin: e ? e.cabin : '', color: e ? entryColorNameInGame(game, e) : '', line: r.w + 'W–' + r.l + 'L' + (r.d ? '–' + r.d + 'D' : '') + ' · ' + r.pf + ' pts' };
       });
     }
     // Bracket: champion first, then everyone else in seed order.
     const champ = game.winnerId;
     const rest = game.entries.filter(function (e) { return e.id !== champ; });
     const out = [];
-    if (champ) { const c = game.entries.find(function (e) { return e.id === champ; }); out.push({ id: c.id, name: c.name, cabin: c.cabin, color: entryColor(game.entries, c).name, line: 'Champion' }); }
-    rest.forEach(function (e) { out.push({ id: e.id, name: e.name, cabin: e.cabin, color: entryColor(game.entries, e).name, line: '' }); });
+    if (champ) { const c = game.entries.find(function (e) { return e.id === champ; }); out.push({ id: c.id, name: c.name, cabin: c.cabin, color: entryColorNameInGame(game, c), line: 'Champion' }); }
+    rest.forEach(function (e) { out.push({ id: e.id, name: e.name, cabin: e.cabin, color: entryColorNameInGame(game, e), line: '' }); });
     return out;
   }
   function resultsText(game) {
@@ -2130,7 +2325,7 @@
           return entryName(game, id) + (c ? ' (' + c + ')' : '');
         }).join(', ')
       : '🏆 Winner: ' + winnerTxt;
-    let txt = game.name + ' — ' + formatLabel(game) + '\n' + fmtDate(game.finishedAt || game.createdAt) + '\n' + winnerLine + '\n';
+    let txt = displayName(game) + ' — ' + formatLabel(game) + '\n' + fmtDate(game.finishedAt || game.createdAt) + '\n' + winnerLine + '\n';
     if (game.format === 'rr' && game.playoffMatches && game.winnerId) txt += 'Playoff champion: ' + winnerTxt + '\n';
     txt += '\nResults:\n';
     rows.forEach(function (r, i) { txt += (i + 1) + '. ' + r.name + (r.color ? ' (' + r.color + ')' : '') + (r.cabin ? ' (cabin ' + r.cabin + ')' : '') + (r.line ? ' — ' + r.line : '') + '\n'; });
@@ -2154,7 +2349,7 @@
     c.fillStyle = '#ffffff'; c.textAlign = 'center';
     c.font = '90px serif'; c.fillText(game.icon || '🏆', 450, 115);
     c.font = '700 44px system-ui, sans-serif';
-    c.fillText(game.name, 450, 185);
+    c.fillText(displayName(game), 450, 185);
     c.font = '400 26px system-ui, sans-serif'; c.fillStyle = '#cfe8f5';
     c.fillText(formatLabel(game) + ' · ' + fmtDate(game.finishedAt || game.createdAt), 450, 228);
     c.font = '800 40px system-ui, sans-serif'; c.fillStyle = '#ffd34d';
@@ -2239,7 +2434,7 @@
     const winner = game.winnerId ? entryName(game, game.winnerId) : (rows.length ? rows[0].name : '—');
     const winnerId = game.winnerId || (rows.length ? rows[0].id : null);
     const wIds = (game.winnerIds && game.winnerIds.length > 1) ? game.winnerIds : null;
-    let h = '<div class="winnerbanner"><div class="crown">🏆</div><div class="sub" style="color:#cfe8f5">' + esc(game.name) + (wIds ? ' — joint winners' : ' winner') + '</div>' +
+    let h = '<div class="winnerbanner"><div class="crown">🏆</div><div class="sub" style="color:#cfe8f5">' + esc(displayName(game)) + (wIds ? ' — joint winners' : ' winner') + '</div>' +
       '<div class="wname">' + (wIds
         ? wIds.map(function (id) { return nameWithDotHTML(game, id); }).join(' &amp; ')
         : (winnerId ? nameWithDotHTML(game, winnerId) : esc(winner))) + '</div></div>';
@@ -2269,8 +2464,11 @@
     const game = {
       id: E.uid('g'), templateId: old.templateId, name: old.name, icon: old.icon, color: old.color,
       def: clone(old.def), format: old.format, entryKind: old.entryKind, scoreMode: old.scoreMode,
-      elim: old.elim, entries: old.entries.map(function (e, i) {
-        return { id: e.id, name: e.name, cabin: e.cabin, members: e.members, color: colorByName(e.color || '') ? e.color : paletteAt(i).name, taps: [], total: null };
+      elim: old.elim, useColors: old.useColors !== false, label: old.label || '',
+      entries: old.entries.map(function (e, i) {
+        const ne = { id: e.id, name: e.name, cabin: e.cabin, members: e.members, taps: [], total: null };
+        if (old.useColors !== false) ne.color = colorByName(e.color || '') ? e.color : paletteAt(i).name;
+        return ne;
       }),
       matches: [], playoffMatches: null, playoffField: null, status: 'playing', winnerId: null,
       createdAt: Date.now(), finishedAt: null
@@ -2326,7 +2524,7 @@
     let h = '<h1>History</h1>';
     if (!finished.length) h += '<p class="empty">No finished games yet.</p>';
     finished.forEach(function (g) {
-      h += '<div class="card row"><div>' + badge(g) + '</div><div class="grow"><div class="gamename">' + esc(g.name) + '</div>' +
+      h += '<div class="card row"><div>' + badge(g) + '</div><div class="grow"><div class="gamename">' + esc(displayName(g)) + '</div>' +
         '<div class="sub">' + esc(formatLabel(g)) + ' · ' + fmtDate(g.finishedAt || g.createdAt) + ' · 🏆 ' + (g.winnerId ? nameWithDotHTML(g, g.winnerId) : '—') + '</div></div>' +
         '<button class="btn small" data-view="' + g.id + '">View</button>' +
         '<button class="btn small danger" data-delhist="' + g.id + '">Delete</button></div>';
