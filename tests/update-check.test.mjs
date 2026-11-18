@@ -1,7 +1,7 @@
 /* End-to-end DOM tests for v1.9: the menu's in-app update check.
    a. Remote version == current: "You're up to date ✓", no Update button.
-   b. Remote version newer (1.10 vs the running 1.9 — also proving the
-      tuple compare): update-available status + Update button; clicking
+   b. Remote version newer (2.1 vs the running 2.0): update-available
+      status + Update button; clicking
       it clears only the cgsa-shell caches, sets the just-updated flag,
       and reloads. A second pass with a waiting service worker checks
       registration.update() + the SKIP_WAITING message + reload on
@@ -46,7 +46,7 @@ function boot(opts) {
   w.fetch = (url, fetchOpts) => {
     w.__fetchCalls.push({ url: String(url), opts: fetchOpts || {} });
     if (opts.fetchImpl) return opts.fetchImpl(url, fetchOpts, w);
-    return Promise.resolve(jsonResponse({ version: '1.9' }));
+    return Promise.resolve(jsonResponse({ version: '2.0' }));
   };
   w.__reloadCalls = 0;
   w.__cgsaReload = () => { w.__reloadCalls++; };
@@ -75,8 +75,8 @@ const updateHidden = () => $('#updateNowBtn').classList.contains('hidden');
 {
   const w = boot();
   const cmp = w.CruiseGameScoring.compareVersions;
-  ok(w.CruiseGameScoring.APP_VERSION === '1.9', 'e: APP_VERSION is 1.9');
-  ok($('#menuVersionText').textContent === 'Version 1.9', 'e: menu version line is rewritten from APP_VERSION');
+  ok(w.CruiseGameScoring.APP_VERSION === '2.0', 'e: APP_VERSION is 2.0');
+  ok($('#menuVersionText').textContent === 'Version 2.0', 'e: menu version line is rewritten from APP_VERSION');
   ok(cmp('1.9', '1.9') === 0, 'e: equal versions compare 0');
   ok(cmp('1.8.1', '1.9') < 0 && cmp('1.9', '1.8.1') > 0, 'e: patch-level compare works');
   ok(cmp('1.10', '1.9') > 0 && cmp('1.9', '1.10') < 0, 'e: 1.10 > 1.9 (tuple compare, not string/float)');
@@ -106,16 +106,16 @@ const updateHidden = () => $('#updateNowBtn').classList.contains('hidden');
 /* ============ (b) newer remote: Update button, cache clear, reload ============ */
 {
   const w = boot({
-    fetchImpl: () => Promise.resolve(jsonResponse({ version: '1.10' })),
-    cacheKeys: ['cgsa-shell-v14', 'cgsa-shell-v15', 'someone-elses-cache']
+    fetchImpl: () => Promise.resolve(jsonResponse({ version: '2.1' })),
+    cacheKeys: ['cgsa-shell-v15', 'cgsa-shell-v16', 'someone-elses-cache']
   });
   click($('#menuBtn'), 'open menu');
   await tick(40);
-  ok(status() === 'Update available: v1.10', 'b: newer remote shows update status, got: ' + status());
+  ok(status() === 'Update available: v2.1', 'b: newer remote shows update status, got: ' + status());
   ok(!updateHidden(), 'b: Update button appears for a newer remote');
   click($('#updateNowBtn'), 'update now');
   await tick(60);
-  ok(w.__deletedCaches.join(',') === 'cgsa-shell-v14,cgsa-shell-v15',
+  ok(w.__deletedCaches.join(',') === 'cgsa-shell-v15,cgsa-shell-v16',
     'b: only cgsa-shell caches were deleted, got: ' + w.__deletedCaches.join(','));
   ok(w.__reloadCalls === 1, 'b: update reloaded the app exactly once (no service worker path)');
   ok(w.sessionStorage.getItem('cgsa-just-updated') === '1', 'b: just-updated flag set for the post-reload check');
@@ -136,18 +136,18 @@ const updateHidden = () => $('#updateNowBtn').classList.contains('hidden');
     removeEventListener: (type, fn) => { if (listeners[type] === fn) delete listeners[type]; }
   };
   const w = boot({
-    fetchImpl: () => Promise.resolve(jsonResponse({ version: '2.0' })),
+    fetchImpl: () => Promise.resolve(jsonResponse({ version: '2.1' })),
     serviceWorker: sw,
-    cacheKeys: ['cgsa-shell-v15']
+    cacheKeys: ['cgsa-shell-v16']
   });
   click($('#menuBtn'), 'open menu');
   await tick(40);
-  ok(status() === 'Update available: v2.0', 'b2: update available with a service worker, got: ' + status());
+  ok(status() === 'Update available: v2.1', 'b2: update available with a service worker, got: ' + status());
   click($('#updateNowBtn'), 'update now (sw)');
   await tick(60);
   ok(calls.update === 1, 'b2: registration.update() was called');
   ok(calls.message && calls.message.type === 'SKIP_WAITING', 'b2: waiting worker got the SKIP_WAITING message');
-  ok(w.__deletedCaches.join(',') === 'cgsa-shell-v15', 'b2: shell cache cleared on the service-worker path too');
+  ok(w.__deletedCaches.join(',') === 'cgsa-shell-v16', 'b2: shell cache cleared on the service-worker path too');
   ok(w.__reloadCalls === 0, 'b2: no reload before controllerchange (fallback timer still pending)');
   ok(typeof listeners.controllerchange === 'function', 'b2: controllerchange listener registered');
   listeners.controllerchange();
