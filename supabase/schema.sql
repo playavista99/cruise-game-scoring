@@ -65,9 +65,11 @@ create policy "feedback insert only" on public.feedback
 -- game, the app publishes a view-only snapshot (FIRST NAMES ONLY for
 -- individuals, team names as-is, NEVER cabin numbers or team member
 -- names) under an unguessable 12-character code. Writes are targeted
--- by that code; there is deliberately NO direct select policy, so
--- rows can never be listed or browsed — reads go only through
--- get_shared_view(), which returns the payload for an exact code
+-- by that code; the only select policy ("anon select by code",
+-- below) exposes a row solely to a request carrying that row's code
+-- in the x-view-code header, so rows can never be listed or browsed
+-- — player reads go only through get_shared_view(), which returns
+-- the payload for an exact code
 -- that has not expired. Views expire 24 hours after their last
 -- update (the app rolls the expiry forward on every push).
 -- ---------------------------------------------------------------------
@@ -83,6 +85,7 @@ alter table public.shared_views enable row level security;
 drop policy if exists "shared_views anon insert" on public.shared_views;
 drop policy if exists "shared_views anon update" on public.shared_views;
 drop policy if exists "shared_views anon delete" on public.shared_views;
+drop policy if exists "anon select by code" on public.shared_views;
 
 create policy "shared_views anon insert" on public.shared_views
   for insert to anon, authenticated with check (true);
@@ -90,6 +93,13 @@ create policy "shared_views anon update" on public.shared_views
   for update to anon, authenticated using (true) with check (true);
 create policy "shared_views anon delete" on public.shared_views
   for delete to anon, authenticated using (true);
+-- PostgREST UPDATE/DELETE (and the upsert conflict branch) can only
+-- touch rows the caller can SELECT, so this narrow select policy
+-- makes a row visible solely to a request that presents that row's
+-- own code in the x-view-code header (the app sends it on every
+-- player-view write). Listing without the header still returns
+-- nothing, so views remain un-browsable.
+create policy "anon select by code" on public.shared_views for select to anon, authenticated using (code = (current_setting('request.headers', true)::json ->> 'x-view-code'));
 
 create or replace function public.get_shared_view(p_code text)
 returns jsonb
