@@ -12,7 +12,7 @@
      line in index.html, the <meta name="app-version"> tag in
      index.html, and the service-worker cache name are bumped
      alongside it on every release — see the README release checklist. */
-  const APP_VERSION = '2.3.1';
+  const APP_VERSION = '2.4';
   const UPDATE_FLAG_KEY = 'cgsa-just-updated';
   function parseVersion(v) {
     return String(v === null || v === undefined ? '' : v).trim().replace(/^v/i, '').split('.').map(function (part) {
@@ -2577,7 +2577,7 @@
       });
     });
     const champ = E.resolveBracket(game.def, matches);
-    if (champ && !noBanner) h += '<div class="winnerbanner"><div class="crown">🏆</div><div class="sub" style="color:#cfe8f5">Champion</div><div class="wname">' + nameWithDotHTML(game, champ) + '</div></div>';
+    if (champ && !noBanner) h += '<div class="winnerbanner"><div class="crown">🏆</div><div class="sub" style="color:#7a5200">Champion</div><div class="wname">' + nameWithDotHTML(game, champ) + '</div></div>';
     return h;
   }
 
@@ -2896,7 +2896,7 @@
       (ctx.where === 'po' ? 'Playoff bracket' : 'Bracket') + '</div></div></div>';
     const champ = E.resolveBracket(game.def, ctx.matches);
     if (champ) {
-      h += '<div class="winnerbanner"><div class="crown">🏆</div><div class="sub" style="color:#cfe8f5">Champion</div>' +
+      h += '<div class="winnerbanner"><div class="crown">🏆</div><div class="sub" style="color:#7a5200">Champion</div>' +
         '<div class="wname">' + nameWithDotHTML(game, champ) + '</div></div>';
     }
     h += bracketPlayHTML(game, ctx.matches, ctx.where, true);
@@ -3291,6 +3291,8 @@
     txt += '\nResults:\n';
     rows.forEach(function (r, i) { txt += (i + 1) + '. ' + r.name + (r.color ? ' (' + r.color + ')' : '') + (r.cabin ? ' (cabin ' + r.cabin + ')' : '') + (r.line ? ' — ' + r.line : '') + '\n'; });
     txt += subLogText(game);
+    if (txt.slice(-1) !== '\n') txt += '\n';
+    txt += '— All Ashore Game Scoring · allashore.app\n';
     return txt;
   }
   function download(filename, blob) {
@@ -3331,6 +3333,8 @@
       c.fillText(r.line || '', 840, 368 + i * 52);
       c.textAlign = 'left'; c.fillStyle = '#12212e';
     });
+    c.fillStyle = '#1f7fc1'; c.textAlign = 'center'; c.font = '600 22px system-ui, sans-serif';
+    c.fillText('— All Ashore Game Scoring · allashore.app', 450, cv.height - 26);
     cv.toBlob(function (blob) { if (blob) download(game.name.replace(/[^a-z0-9]+/gi, '-').toLowerCase() + '-results.png', blob); }, 'image/png');
   }
   function shareButtonsHTML(game) {
@@ -3824,7 +3828,7 @@
     const winner = game.winnerId ? entryName(game, game.winnerId) : (rows.length ? rows[0].name : '—');
     const winnerId = game.winnerId || (rows.length ? rows[0].id : null);
     const wIds = (game.winnerIds && game.winnerIds.length > 1) ? game.winnerIds : null;
-    let h = '<div class="winnerbanner"><div class="crown">🏆</div><div class="sub" style="color:#cfe8f5">' + esc(displayName(game)) + (wIds ? ' — joint winners' : ' winner') + '</div>' +
+    let h = '<div class="winnerbanner"><div class="crown">🏆</div><div class="sub" style="color:#7a5200">' + esc(displayName(game)) + (wIds ? ' — joint winners' : ' winner') + '</div>' +
       '<div class="wname">' + (wIds
         ? wIds.map(function (id) { return nameWithDotHTML(game, id); }).join(' &amp; ')
         : (winnerId ? nameWithDotHTML(game, winnerId) : esc(winner))) + '</div></div>';
