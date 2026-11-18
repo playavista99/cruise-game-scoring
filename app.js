@@ -1214,11 +1214,25 @@
   function matchLabel(game, matches, m) {
     return 'M' + (matches.indexOf(m) + 1);
   }
+  /* The entry a win/lose feeder slot will be filled by, once its
+     feeder match has a result — even before resolveBracket sets this
+     match's own aId/bId (those wait for BOTH feeders to resolve).
+     Display only: each winner's name shows in the next round as soon
+     as they win their match (Jeff's pick, v1.6.1), while the Score
+     button still unlocks only when both participants are set. */
+  function feederKnownId(matches, src) {
+    if (!src || (src.t !== 'win' && src.t !== 'lose')) return null;
+    const fm = matches.find(function (x) { return x.id === src.m; });
+    if (!fm) return null;
+    return (src.t === 'win' ? fm.winnerId : fm.loserId) || null;
+  }
   function sideName(game, matches, m, side) {
     const id = side === 'a' ? m.aId : m.bId;
     if (id) return entryName(game, id);
     const src = side === 'a' ? m.srcA : m.srcB;
     if (src && (src.t === 'win' || src.t === 'lose')) {
+      const known = feederKnownId(matches, src);
+      if (known) return entryName(game, known);
       const srcMatch = matches.find(function (x) { return x.id === src.m; });
       if (!srcMatch) return 'TBD';
       return (src.t === 'win' ? 'Winner of ' : 'Loser of ') + matchStageName(game, matches, srcMatch);
@@ -1227,7 +1241,10 @@
   }
   function sideNameHTML(game, matches, m, side) {
     const id = side === 'a' ? m.aId : m.bId;
-    return id ? nameWithDotHTML(game, id) : esc(sideName(game, matches, m, side));
+    if (id) return nameWithDotHTML(game, id);
+    const src = side === 'a' ? m.srcA : m.srcB;
+    const known = feederKnownId(matches, src);
+    return known ? nameWithDotHTML(game, known) : esc(sideName(game, matches, m, side));
   }
   function matchCardHTML(game, matches, m, where) {
     const isOpen = openScorer && openScorer.matchId === m.id;
