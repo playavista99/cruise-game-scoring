@@ -12,8 +12,15 @@
      line in index.html, the <meta name="app-version"> tag in
      index.html, and the service-worker cache name are bumped
      alongside it on every release — see the README release checklist. */
-  const APP_VERSION = '2.4.2';
+  const APP_VERSION = '2.4.3';
   const UPDATE_FLAG_KEY = 'cgsa-just-updated';
+  const UPDATE_TARGET_KEY = 'cgsa-update-target';
+  const UPDATE_CONFIRMED_KEY = 'cgsa-update-confirmed';
+  /* Post-update Home banner (v2.4.3): set by the startup update
+     check, rendered only by the Home screen, dismissed by tap (and
+     automatically after ~8s for the success kind). */
+  let updateBanner = null;
+  let updateBannerTimer = null;
   function parseVersion(v) {
     return String(v === null || v === undefined ? '' : v).trim().replace(/^v/i, '').split('.').map(function (part) {
       const n = parseInt(part, 10);
@@ -371,7 +378,8 @@
   SCREENS.home = function () {
     const inProgress = S.games.filter(function (g) { return g.status === 'playing'; });
     const finished = S.games.filter(function (g) { return g.status === 'finished'; });
-    let h = '<h1>Score a game</h1>' +
+    let h = updateBannerHTML() +
+      '<h1>Score a game</h1>' +
       '<div class="homeactions">' +
       '<button class="btn" id="newGameBtn">🎮 New game</button>' +
       '<button class="btn secondary" id="newCruiseBtn">🛳 New cruise</button></div>' +
@@ -465,6 +473,8 @@
   BINDS.home = function () {
     disarmPresetDel(); // every fresh render starts disarmed
     disarmGameDel();
+    const ub = document.getElementById('updateBanner');
+    if (ub) ub.addEventListener('click', dismissUpdateBanner);
     document.getElementById('newGameBtn').addEventListener('click', function () {
       // With cruises on file, ask where the game belongs first; with
       // none, go straight to the pick screen exactly as before (v2.0).
@@ -4325,6 +4335,7 @@
   const updateStatus = document.getElementById('updateStatus');
   const checkUpdatesBtn = document.getElementById('checkUpdatesBtn');
   const updateNowBtn = document.getElementById('updateNowBtn');
+  const updateProgress = document.getElementById('updateProgress');
   if (menuVersionText) menuVersionText.textContent = 'Version ' + APP_VERSION;
   let updateCheckInFlight = false;
   let updateRemoteVersion = null;
@@ -4332,6 +4343,9 @@
 
   function setUpdateStatus(text) {
     if (updateStatus) updateStatus.textContent = text || '';
+  }
+  function setUpdateProgress(show) {
+    if (updateProgress) updateProgress.classList.toggle('hidden', !show);
   }
   function showUpdateButton(show) {
     if (!updateNowBtn) return;
@@ -4343,16 +4357,40 @@
   function setJustUpdatedFlag() {
     try { window.sessionStorage.setItem(UPDATE_FLAG_KEY, '1'); } catch (e) { /* private mode: the note is a nicety */ }
   }
+  /* Clearing the flag clears the stored target with it: the pair is
+     one outcome record, consumed together by the startup banner. */
   function clearJustUpdatedFlag() {
-    try { window.sessionStorage.removeItem(UPDATE_FLAG_KEY); } catch (e) { /* nothing to clear */ }
+    try {
+      window.sessionStorage.removeItem(UPDATE_FLAG_KEY);
+      window.sessionStorage.removeItem(UPDATE_TARGET_KEY);
+    } catch (e) { /* nothing to clear */ }
   }
-  function checkForUpdates() {
-    if (updateCheckInFlight) return Promise.resolve(false);
-    updateCheckInFlight = true;
-    if (checkUpdatesBtn) {
-      checkUpdatesBtn.disabled = true;
-      checkUpdatesBtn.textContent = 'Checking…';
-    }
+  /* The target version an update was heading to (v2.4.3+). Updates
+     started by older builds set the flag WITHOUT a target — the
+     startup banner treats that as the legacy case and checks. */
+  function updateTarget() {
+    try { return window.sessionStorage.getItem(UPDATE_TARGET_KEY) || ''; } catch (e) { return ''; }
+  }
+  function setUpdateTarget(v) {
+    try { window.sessionStorage.setItem(UPDATE_TARGET_KEY, String(v)); } catch (e) { /* nicety */ }
+  }
+  /* When the startup banner consumes the flag, it leaves this marker
+     so the menu's confirming status ("Updated — you're on the latest
+     version ✓") still shows once, exactly as it did before the
+     banner existed. */
+  function updateConfirmed() {
+    try { return window.sessionStorage.getItem(UPDATE_CONFIRMED_KEY) === APP_VERSION; } catch (e) { return false; }
+  }
+  function setUpdateConfirmed(v) {
+    try { window.sessionStorage.setItem(UPDATE_CONFIRMED_KEY, String(v)); } catch (e) { /* nicety */ }
+  }
+  function clearUpdateConfirmed() {
+    try { window.sessionStorage.removeItem(UPDATE_CONFIRMED_KEY); } catch (e) { /* nothing to clear */ }
+  }
+  /* One quiet fetch of the published marker, shared by the menu
+     check and the legacy startup banner. Resolves with the remote
+     version string; rejects on any failure (offline, bad payload). */
+  function fetchRemoteVersion() {
     const url = 'version.json?cb=' + Date.now();
     return Promise.resolve().then(function () {
       return fetch(url, { cache: 'no-store' });
@@ -4362,15 +4400,31 @@
     }).then(function (data) {
       const remote = data && data.version !== null && data.version !== undefined ? String(data.version).trim() : '';
       if (!remote || !/^\d+(?:\.\d+)*$/.test(remote)) throw new Error('version check failed');
+      return remote;
+    });
+  }
+  function checkForUpdates() {
+    if (updateCheckInFlight) return Promise.resolve(false);
+    updateCheckInFlight = true;
+    /* Visible in-flight state (v2.4.3): on a slow connection the
+       check can take a while, and a silent menu looks hung. */
+    setUpdateStatus('Checking for updates…');
+    setUpdateProgress(true);
+    if (checkUpdatesBtn) {
+      checkUpdatesBtn.disabled = true;
+      checkUpdatesBtn.textContent = 'Checking…';
+    }
+    return fetchRemoteVersion().then(function (remote) {
       updateRemoteVersion = remote;
       const cmp = compareVersions(remote, APP_VERSION);
       if (cmp > 0) {
         setUpdateStatus('Update available: v' + remote);
         showUpdateButton(true);
-      } else if (cmp === 0 && justUpdatedFlag()) {
+      } else if (cmp === 0 && (justUpdatedFlag() || updateConfirmed())) {
         setUpdateStatus('Updated — you\'re on the latest version ✓');
         showUpdateButton(false);
         clearJustUpdatedFlag();
+        clearUpdateConfirmed();
       } else {
         setUpdateStatus('You\'re up to date ✓');
         showUpdateButton(false);
@@ -4383,6 +4437,7 @@
       return false;
     }).then(function (result) {
       updateCheckInFlight = false;
+      if (!updateInProgress) setUpdateProgress(false);
       if (checkUpdatesBtn) {
         checkUpdatesBtn.disabled = false;
         checkUpdatesBtn.textContent = 'Check for updates';
@@ -4408,8 +4463,23 @@
   function performUpdate() {
     if (updateInProgress) return Promise.resolve(false);
     updateInProgress = true;
-    if (updateNowBtn) updateNowBtn.disabled = true;
+    /* Visible updating state (v2.4.3): the button stays disabled as
+       "Updating…", the status says what is happening and that the
+       app reloads itself, and the progress bar runs — all until the
+       reload, however long a slow connection takes. The target
+       version is stored with the just-updated flag so the post-
+       reload banner can tell success from a didn't-finish. */
+    const target = updateRemoteVersion ? String(updateRemoteVersion) : '';
     setJustUpdatedFlag();
+    if (target) setUpdateTarget(target);
+    if (updateNowBtn) {
+      updateNowBtn.disabled = true;
+      updateNowBtn.textContent = 'Updating…';
+    }
+    if (target) {
+      setUpdateStatus('Updating to v' + target + ' — the app will reload itself when it\'s ready. On a slow connection this can take a minute.');
+    }
+    setUpdateProgress(true);
     let reloaded = false;
     let fallbackTimer = null;
     let swEvents = null;
@@ -4463,20 +4533,93 @@
       reloadOnce();
       return true;
     }).then(function (result) {
-      if (updateNowBtn) updateNowBtn.disabled = false;
-      if (!reloaded) {
-        /* A service-worker update is still settling; the pending
-           controllerchange/fallback owns the reload and the flag. */
-        updateInProgress = true;
-      } else {
-        updateInProgress = false;
+      /* The updating UI is NOT restored here: whether the reload is
+         still settling (controllerchange/fallback pending) or has
+         just been triggered, the disabled "Updating…" state stays
+         until the page actually reloads — restoring it early made a
+         slow update look like it had silently given up. */
+      if (updateNowBtn) {
+        updateNowBtn.disabled = true;
+        updateNowBtn.textContent = 'Updating…';
       }
+      setUpdateProgress(true);
+      updateInProgress = true;
       return result;
     });
   }
   if (updateNowBtn) updateNowBtn.addEventListener('click', function () { performUpdate(); });
   window.CruiseGameScoring.checkForUpdates = checkForUpdates;
   window.CruiseGameScoring.performUpdate = performUpdate;
+
+  /* ----- Post-update Home banner (v2.4.3) -----
+     The reload that finishes an update used to land silently: the
+     only confirmation lived in the ☰ menu's status line, which the
+     user might never open. Now the outcome shows on Home itself.
+     The just-updated flag is the trigger; it is consumed here, once.
+     Two shapes:
+     - Target stored (updates started by v2.4.3+): APP_VERSION equal
+       to the target means the update landed; anything else means it
+       didn't finish.
+     - No target (LEGACY: the update was started by an older build,
+       e.g. a phone updating from 2.4.1, which set the flag but never
+       stored a target): ask the network. Remote == running version
+       means it landed; a NEWER remote means it didn't finish; a
+       failed check (offline) shows NO banner and clears the flag —
+       the menu status line remains the fallback, as before. */
+  function updateBannerHTML() {
+    if (!updateBanner) return '';
+    const cls = updateBanner.kind === 'warning' ? 'updatebanner warning' : 'updatebanner success';
+    return '<button class="' + cls + '" id="updateBanner" type="button" role="status">' + esc(updateBanner.text) + '</button>';
+  }
+  function dismissUpdateBanner() {
+    if (updateBannerTimer) { clearTimeout(updateBannerTimer); updateBannerTimer = null; }
+    updateBanner = null;
+    const el = document.getElementById('updateBanner');
+    if (el && el.parentNode) el.parentNode.removeChild(el);
+  }
+  function showUpdateBanner(kind, text) {
+    if (updateBannerTimer) { clearTimeout(updateBannerTimer); updateBannerTimer = null; }
+    updateBanner = { kind: kind, text: text };
+    if (screen && screen.name === 'home') render();
+    if (kind === 'success') updateBannerTimer = setTimeout(dismissUpdateBanner, 8000);
+  }
+  function updateDidntFinishText() {
+    return 'The update didn\'t finish — you\'re still on v' + APP_VERSION + '. Check your connection, then try again from the ☰ menu.';
+  }
+  function processUpdateBannerOnStartup() {
+    if (!justUpdatedFlag()) return Promise.resolve(false);
+    const target = updateTarget();
+    if (target) {
+      if (compareVersions(APP_VERSION, target) === 0) {
+        clearJustUpdatedFlag();
+        setUpdateConfirmed(target);
+        showUpdateBanner('success', '✓ Updated to v' + target);
+      } else {
+        clearJustUpdatedFlag();
+        showUpdateBanner('warning', updateDidntFinishText());
+      }
+      return Promise.resolve(true);
+    }
+    /* Legacy: no target stored — decide from a live check. */
+    return fetchRemoteVersion().then(function (remote) {
+      if (compareVersions(remote, APP_VERSION) > 0) {
+        clearJustUpdatedFlag();
+        showUpdateBanner('warning', updateDidntFinishText());
+      } else {
+        clearJustUpdatedFlag();
+        setUpdateConfirmed(APP_VERSION);
+        showUpdateBanner('success', '✓ Updated to v' + APP_VERSION);
+      }
+      return true;
+    }).catch(function () {
+      /* Offline: no banner; the flag is cleared so a stale outcome
+         never appears on a later launch. */
+      clearJustUpdatedFlag();
+      return false;
+    });
+  }
+  window.CruiseGameScoring.processUpdateBannerOnStartup = processUpdateBannerOnStartup;
+  window.CruiseGameScoring.dismissUpdateBanner = dismissUpdateBanner;
 
   /* ----- Self-healing version guard -----
      GitHub Pages publishes file by file, and the service worker's
@@ -4675,6 +4818,13 @@
   sbInit();
   render();
   /* After the first render: if this shell is a mixed-version pair,
-     heal it (once per session) — see shellVersionGuard above. */
-  shellVersionGuard();
+     heal it (once per session) — see shellVersionGuard above. The
+     post-update banner runs only when the guard did NOT heal: if
+     the guard reloads, the just-updated flag survives in
+     sessionStorage and the banner logic runs after the heal reload
+     instead of being consumed by a page that is about to go away. */
+  Promise.resolve(shellVersionGuard()).then(function (healed) {
+    if (!healed) return processUpdateBannerOnStartup();
+    return false;
+  }).catch(function () { /* the banner is a nicety, never a blocker */ });
 })();
