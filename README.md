@@ -76,18 +76,41 @@ even before the other feeder is played — the match itself still only
 becomes scorable once both players are set. These are format-level
 features — they work the same for every game, built-in or custom.
 
-**Entry colors:** every player or team in every game gets a color
-(Red, Blue, Green, Yellow, Orange, Purple, Black, White), assigned
-automatically in sign-up order — so Bean Bag Toss starts Red vs Blue —
-and changeable by tapping the color swatch on the sign-up row. The
-color dot follows the entry through play, standings, brackets,
-results and history; in Bean Bag Toss tap-by-tap scoring each side's
-scoring block is also tinted with its color.
+**Entry colors — your choice at setup:** player colors are a setup
+option, not automatic. The setup screen's *Player colors* toggle
+defaults **on for Bean Bag Toss only** (the bags themselves are
+colored) and **off for every other game**; flip it either way before
+the game starts. When on, every player or team gets a color (Red,
+Blue, Green, Yellow, Orange, Purple, Black, White) in sign-up order —
+so Bean Bag starts Red vs Blue — changeable by tapping the color
+swatch on the sign-up row, and the color dot follows the entry
+through play, standings, brackets, results and history (Bean Bag
+tap-by-tap scoring blocks are also tinted). When off, there is no
+color UI anywhere and entries carry no color at all. Games saved
+before the choice existed simply keep showing their colors.
 
-**Data:** games, templates and history are stored in the browser's
-localStorage on the device. Nothing about players or games leaves the
-device. An optional staff account (Supabase Auth) syncs *custom
-templates only* across a staffer's devices.
+**Game labels:** the setup screen's optional *Game label* names a
+specific game — "Soccer Shootout — Day 1", "Soccer Shootout
+Tournament" — and then titles it everywhere the game's name appears:
+the play screen (base game name kept in the sub-line), home,
+history, the results screen and the shared results text. The label
+can also be set or changed later in the ⚙ Game settings screen.
+
+**Saved setups:** *💾 Save these settings* on the setup screen stores
+the whole configuration — base game, edited scoring rules, format
+and its options, Quick Score rounds plan, colors choice and label —
+under a name you pick. The home screen's *Saved setups* section
+launches one straight to sign-up with two taps (▶ Start); players
+are never stored, they sign up fresh each time. A setup whose custom
+game template has been deleted is greyed out and can't start.
+Setups are stored **on-device only** (localStorage, like games and
+history) — they deliberately do not sync through Supabase; cloud
+sync would need a new table and is out of scope.
+
+**Data:** games, templates, saved setups and history are stored in
+the browser's localStorage on the device. Nothing about players or
+games leaves the device. An optional staff account (Supabase Auth)
+syncs *custom templates only* across a staffer's devices.
 
 **☰ Menu (top right):** *Install this app* (PWA install prompt, or
 Add-to-Home-Screen instructions) · *Share / QR code* (a QR code for
@@ -109,7 +132,7 @@ bottom of the home page. Feedback is written to the Supabase
 | `sw.js`, `manifest.webmanifest`, `icon.svg` | Offline shell / installable PWA bits |
 | `supabase/schema.sql` | One-time database setup for the optional account |
 | `tests/engines.test.mjs` | Engine verification: `node tests/engines.test.mjs` |
-| `tests/quick-rounds.test.mjs`, `tests/rr-adds.test.mjs`, `tests/edit-players.test.mjs` | End-to-end DOM tests (jsdom) driving the shipped app: `node tests/quick-rounds.test.mjs`, `node tests/rr-adds.test.mjs`, `node tests/edit-players.test.mjs` |
+| `tests/quick-rounds.test.mjs`, `tests/rr-adds.test.mjs`, `tests/edit-players.test.mjs`, `tests/playoff-field.test.mjs`, `tests/winner-flow.test.mjs`, `tests/setup-features.test.mjs` | End-to-end DOM tests (jsdom) driving the shipped app: `node tests/<name>.test.mjs` |
 
 ## Hosting (GitHub Pages)
 
