@@ -188,7 +188,7 @@ ok(sumCard.indexOf('Ana') < sumCard.indexOf('Cal'), 'd: tied wins sort by name (
 ok($$('[data-cruiseview]').length === 2, 'd: cruise page lists both finished games');
 // The Home cruise card's player count must agree with the summary:
 // both are the roster size (5 here — Daniel, Ana, Ben, Walt, Cal).
-click($('#cruiseBackBtn'), 'back home from cruise page');
+click($('#navBackBtn'), 'back home from cruise page (nav row)');
 ok(bodyText(w).includes('2 games · 5 players'), 'd: home card meta players = 5 = roster size, agrees with summary');
 openCruiseFromHome(w, cruiseId);
 // Removing Walt from the roster must not touch game 1.
