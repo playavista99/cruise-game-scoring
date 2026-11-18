@@ -2788,7 +2788,7 @@
   };
 
   /* ----- Cruise page (v1.8) -----
-     One sailing's home: a summary (games played, distinct players,
+     One sailing's home: a summary (games played, roster size,
      wins per player), its games (in-progress resume, finished open
      the usual history detail), a "new game in this cruise" launch,
      and the roster. The roster is this cruise's player list: game
@@ -2817,13 +2817,8 @@
   }
   function cruiseSummary(cruise) {
     const finished = S.games.filter(function (g) { return g.cruiseId === cruise.id && g.status === 'finished'; });
-    const players = {}; // normalized name -> display name (first seen)
     const wins = {};    // normalized name -> {name, count}
     finished.forEach(function (g) {
-      g.entries.forEach(function (e) {
-        const k = normName(e.name);
-        if (k && !players[k]) players[k] = e.name;
-      });
       const wIds = (g.winnerIds && g.winnerIds.length) ? g.winnerIds : (g.winnerId ? [g.winnerId] : []);
       wIds.forEach(function (id) {
         const e = g.entries.find(function (x) { return x.id === id; });
@@ -2836,7 +2831,10 @@
     });
     const winRows = Object.keys(wins).map(function (k) { return wins[k]; })
       .sort(function (a, b) { return (b.count - a.count) || a.name.localeCompare(b.name); });
-    return { gamesPlayed: finished.length, playerCount: Object.keys(players).length, winRows: winRows };
+    // Players = the whole roster (v1.8.1, Jeff's choice): anyone on the
+    // roster counts, even if they've only played an unfinished game or
+    // haven't played yet. Matches the Home cruise card's player count.
+    return { gamesPlayed: finished.length, playerCount: (cruise.roster || []).length, winRows: winRows };
   }
   SCREENS.cruise = function (cruiseId) {
     const c = getCruise(cruiseId);
