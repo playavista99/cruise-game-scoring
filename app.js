@@ -960,7 +960,7 @@
       (game.scoreMode === 'tap' ? 'Tap-by-tap scoring' : 'Final-total scoring') + '</div></div>' +
       '<button class="btn small secondary" id="gameSettingsBtn">⚙ Game settings</button></div>';
     if (game.format === 'quick') h += quickPlayHTML(game);
-    else if (game.format === 'bracket') h += bracketPlayHTML(game, game.matches, 'brk');
+    else if (game.format === 'bracket') h += bracketPlayHTML(game, game.matches, 'brk') + bracketAddHTML(game);
     else h += rrPlayHTML(game);
     h += '<hr class="divider">' +
       '<button class="btn block" id="finishBtn"' + (canFinish(game) ? '' : ' disabled') + '>Finish game</button>' +
@@ -982,7 +982,7 @@
     const fb = document.getElementById('finishBtn');
     if (fb) fb.addEventListener('click', function () { finishGame(game); });
     if (game.format === 'quick') bindQuick(game);
-    else if (game.format === 'bracket') bindMatchCards(game, game.matches, 'brk');
+    else if (game.format === 'bracket') { bindMatchCards(game, game.matches, 'brk'); bindBracketAdd(game); }
     else bindRR(game);
   };
 
@@ -1299,6 +1299,7 @@
       E.resolveBracket(game.def, inPlayoff ? game.playoffMatches : game.matches);
     } else {
       E.scoreRRMatch(game, game.def, m.id, sa, sb);
+      game.rrNote = null; // a schedule note has done its job once play moves on
     }
     openScorer = null;
     save(); render();
@@ -1355,12 +1356,18 @@
   /* ----- Round Robin play ----- */
   function rrPlayHTML(game) {
     const st = E.computeStandings(game.entries, game.matches, game.def);
-    let h = '<h2>Standings</h2><div class="card" style="padding:8px 12px"><table class="stand"><tr><th>#</th><th>' +
+    const playedMap = E.rrGamesPlayed(game);
+    let h = '';
+    if (game.rrNote) h += '<div class="card" style="border-left:7px solid #0b6fa4">' + esc(game.rrNote) + '</div>';
+    h += '<h2>Standings</h2><div class="card" style="padding:8px 12px"><table class="stand"><tr><th>#</th><th>' +
       (game.entryKind === 'teams' ? 'Team' : 'Player') + '</th><th class="num">P</th><th class="num">W</th><th class="num">L</th><th class="num">Diff</th><th class="num">Pts</th></tr>';
     st.forEach(function (r, i) {
       const e = game.entries.find(function (x) { return x.id === r.id; });
+      // Results-based walk-ups sit in the pool with no match and no
+      // bye yet — they join properly when the next round is paired.
+      const joins = game.rrPairing === 'results' && !game.playoffMatches && (playedMap[r.id] || 0) === 0;
       h += '<tr' + (i === 0 ? ' class="top"' : '') + '><td>' + (i + 1) + '</td><td>' + (e ? entryDotHTML(game, e.id) : '') + esc(e ? e.name : r.id) +
-        (e && e.cabin ? ' <span class="sub">(' + esc(e.cabin) + ')</span>' : '') + '</td>' +
+        (e && e.cabin ? ' <span class="sub">(' + esc(e.cabin) + ')</span>' : '') + (joins ? '<span class="tag">Joins next round</span>' : '') + '</td>' +
         '<td class="num">' + r.played + '</td><td class="num">' + r.w + '</td><td class="num">' + r.l + '</td>' +
         '<td class="num">' + (r.diff > 0 ? '+' : '') + r.diff + '</td><td class="num">' + r.pf + '</td></tr>';
     });
@@ -1393,12 +1400,27 @@
         if (k >= 2) h += '<button class="btn block" id="startPlayoffBtn">Start playoff — top ' + k + ' (' + (game.playoffElim === 'double' ? 'double' : 'single') + ' elimination)</button>';
       }
     }
+    // Mid-game walk-ups (v1.4). Blocked once the playoff has started.
     if (game.playoffMatches) {
+      h += '<div class="card"><span class="sub">Players can’t be added once the playoff has started.</span></div>';
       h += '<h2>Playoff bracket</h2>' + bracketPlayHTML(game, game.playoffMatches, 'po');
+    } else {
+      h += '<h3>Add a walk-up</h3><div class="entryrow">' +
+        '<input type="text" class="nm" id="rrWalkName" placeholder="Name" autocomplete="off">' +
+        '<input type="text" class="cb" id="rrWalkCabin" placeholder="Cabin" inputmode="numeric">' +
+        '<button class="iconbtn" id="rrWalkAdd" aria-label="Add">＋</button></div>' +
+        (game.rrPairing === 'preset'
+          ? '<p class="note">Adding a player rebuilds the unscored part of the schedule around the matches already played — scored matches never change.</p>'
+          : '<p class="note">A walk-up joins the pool right away and is paired when the next round is paired from the standings.</p>');
+      if (game.rrPairing === 'preset' && !rrDone(game)) {
+        h += '<button class="btn secondary block" id="regenRRBtn" data-regenrr="1">↻ Regenerate remaining schedule</button>' +
+          '<p class="note" style="text-align:center">Rebuilds the unscored pairings for the current players. Scored matches are kept exactly as they are.</p>';
+      }
     }
     return h;
   }
   function bindRR(game) {
+    disarmRRRegen(); // every fresh render starts disarmed (same pattern as history delete)
     bindMatchCards(game, game.matches, 'rr'); // one binding covers playoff cards too (findMatch searches both)
     const gen = document.getElementById('genRoundBtn');
     if (gen) gen.addEventListener('click', function () {
@@ -1409,6 +1431,7 @@
           game.rrByeByRound = game.rrByeByRound || {};
           game.rrByeByRound[rn] = game.rrByes[game.rrByes.length - 1];
         }
+        game.rrNote = null;
         save(); render();
       }
     });
@@ -1420,6 +1443,165 @@
       game.playoffMatches = game.playoffElim === 'double' ? E.buildDoubleElim(seeds) : E.buildSingleElim(seeds);
       game.playoffMatches.forEach(function (m) { m.stage = m.stage === 'brk' ? 'brk' : m.stage; });
       E.resolveBracket(game.def, game.playoffMatches);
+      game.rrNote = null;
+      save(); render();
+    });
+    const wa = document.getElementById('rrWalkAdd');
+    if (wa) wa.addEventListener('click', function () {
+      const nm = document.getElementById('rrWalkName');
+      const name = nm.value.trim();
+      if (!name) { nm.focus(); return; }
+      if (game.playoffMatches) return; // the form is not rendered then; defensive
+      const wasComplete = game.rrPairing === 'preset' && rrDone(game);
+      game.entries.push({
+        id: E.uid('e'), name: name,
+        cabin: document.getElementById('rrWalkCabin').value.trim(),
+        color: paletteAt(game.entries.length).name,
+        taps: [], total: null
+      });
+      if (game.rrPairing === 'preset') {
+        const sum = regeneratePresetRR(game);
+        game.rrNote = (wasComplete
+          ? 'Late entry added — some players get an extra game so ' + name + ' can play. '
+          : '') + regenSummaryText(sum);
+      } else {
+        game.rrNote = name + ' added — joins the pool now and will be paired when the next round is paired from the standings.';
+      }
+      save(); render();
+    });
+    const rg = document.getElementById('regenRRBtn');
+    if (rg) rg.addEventListener('click', function () {
+      if (!rrRegenArmed) {
+        // First tap arms only (two-step in-app confirm, v1.3.1 pattern).
+        disarmRRRegen();
+        rrRegenArmed = true;
+        rg.textContent = 'Confirm regenerate?';
+        rg.classList.add('confirming');
+        rrRegenArmTimer = setTimeout(disarmRRRegen, 4000);
+        return;
+      }
+      disarmRRRegen();
+      const sum = regeneratePresetRR(game);
+      game.rrNote = regenSummaryText(sum);
+      save(); render();
+    });
+  }
+
+  /* ----- Mid-game adds + RR schedule regeneration (v1.4) -----
+     Scored RR matches are sacred: regeneration keeps every one of
+     them exactly as-is (pairing, scores, round number) and rebuilds
+     only the unscored remainder around the current entry list. Each
+     entry's remaining need is rrTarget minus the scored matches it
+     has played; E.buildRemainingRR schedules those needs, with fill
+     games (reported as extras) only when a leftover entry's possible
+     opponents are all at target — the completed-RR late-entry case. */
+  let rrRegenArmed = false, rrRegenArmTimer = null;
+  function disarmRRRegen() {
+    rrRegenArmed = false;
+    if (rrRegenArmTimer) { clearTimeout(rrRegenArmTimer); rrRegenArmTimer = null; }
+    document.querySelectorAll('[data-regenrr]').forEach(function (x) {
+      x.textContent = '↻ Regenerate remaining schedule'; x.classList.remove('confirming');
+    });
+  }
+  function rrScoredStats(game) {
+    const played = {}, forbidden = {};
+    game.entries.forEach(function (e) { played[e.id] = 0; });
+    game.matches.forEach(function (m) {
+      if (m.kind !== 'rr' || !m.scored || m.autoBye) return;
+      if (played[m.aId] !== undefined) played[m.aId]++;
+      if (played[m.bId] !== undefined) played[m.bId]++;
+      forbidden[E.pairKey(m.aId, m.bId)] = true;
+    });
+    return { played: played, forbidden: forbidden };
+  }
+  // Rebuild the unscored part of a pre-set RR. Returns a summary
+  // {kept, newMatches, newRounds, extras} for the on-screen note.
+  function regeneratePresetRR(game) {
+    const scored = game.matches.filter(function (m) { return m.scored; });
+    const ids = game.entries.map(function (e) { return e.id; });
+    if (!scored.length) {
+      // Nothing played yet: a fresh full schedule for the field as
+      // it stands now (canonical builder, byes included).
+      const built = E.buildPresetRR(ids, game.rrTarget);
+      game.matches = built.matches;
+      game.rrByeByRound = {};
+      built.rounds.forEach(function (r, i) { if (r.bye) game.rrByeByRound[i + 1] = r.bye; });
+      game.rrRoundsGenerated = built.rounds.length;
+      return { kept: 0, newMatches: built.matches.length, newRounds: built.rounds.length, extras: {} };
+    }
+    const stats = rrScoredStats(game);
+    const needs = {};
+    game.entries.forEach(function (e) {
+      needs[e.id] = Math.max(0, game.rrTarget - (stats.played[e.id] || 0));
+    });
+    const maxScoredRound = Math.max.apply(null, scored.map(function (m) { return m.round; }));
+    const built = E.buildRemainingRR(ids, needs, stats.forbidden, stats.played,
+      1000 + ids.length * 131 + scored.length * 17);
+    // Bye records survive only for rounds that contain a scored match.
+    const byeByRound = {};
+    Object.keys(game.rrByeByRound || {}).forEach(function (rk) {
+      const rn = parseInt(rk, 10);
+      if (scored.some(function (m) { return m.round === rn; })) byeByRound[rn] = game.rrByeByRound[rk];
+    });
+    const fresh = [];
+    built.rounds.forEach(function (r, i) {
+      const rn = maxScoredRound + 1 + i;
+      r.pairs.forEach(function (pr) {
+        fresh.push({
+          id: E.uid('m'), kind: 'rr', stage: 'rr', round: rn,
+          aId: pr[0], bId: pr[1], sa: null, sb: null, tapsA: [], tapsB: [],
+          scored: false, autoBye: false, winnerId: null, loserId: null
+        });
+      });
+      if (r.bye) byeByRound[rn] = r.bye;
+    });
+    game.matches = scored.concat(fresh);
+    game.rrByeByRound = byeByRound;
+    game.rrRoundsGenerated = game.matches.reduce(function (mx, m) { return Math.max(mx, m.round); }, 0);
+    return { kept: scored.length, newMatches: fresh.length, newRounds: built.rounds.length, extras: built.extras };
+  }
+  function regenSummaryText(sum) {
+    if (!sum.newMatches) {
+      return 'Schedule rebuilt: ' + sum.kept + (sum.kept === 1 ? ' match' : ' matches') +
+        ' kept — no new matches could be scheduled.';
+    }
+    return 'Schedule rebuilt: ' + sum.kept + (sum.kept === 1 ? ' match' : ' matches') + ' kept, ' +
+      sum.newMatches + ' new ' + (sum.newMatches === 1 ? 'match' : 'matches') + ' over ' +
+      sum.newRounds + (sum.newRounds === 1 ? ' round' : ' rounds') + '.';
+  }
+
+  /* ----- Bracket walk-ups (v1.4) -----
+     Allowed only while zero real matches have been scored: the
+     bracket is rebuilt from scratch with the newcomer as last seed.
+     Once a real score exists the bracket is locked — byes that the
+     engine auto-advanced do not count as "scored" here. */
+  function bracketAddHTML(game) {
+    const scoredReal = game.matches.filter(function (m) { return m.scored && !m.autoBye; }).length;
+    if (scoredReal > 0) {
+      return '<div class="card"><span class="sub">Players can’t be added once bracket matches are scored.</span></div>';
+    }
+    return '<h3>Add a walk-up</h3><div class="entryrow">' +
+      '<input type="text" class="nm" id="brWalkName" placeholder="Name" autocomplete="off">' +
+      '<input type="text" class="cb" id="brWalkCabin" placeholder="Cabin" inputmode="numeric">' +
+      '<button class="iconbtn" id="brWalkAdd" aria-label="Add">＋</button></div>' +
+      '<p class="note">Adding a player before any match is scored rebuilds the bracket with them as the last seed.</p>';
+  }
+  function bindBracketAdd(game) {
+    const wa = document.getElementById('brWalkAdd');
+    if (!wa) return;
+    wa.addEventListener('click', function () {
+      const nm = document.getElementById('brWalkName');
+      const name = nm.value.trim();
+      if (!name) { nm.focus(); return; }
+      game.entries.push({
+        id: E.uid('e'), name: name,
+        cabin: document.getElementById('brWalkCabin').value.trim(),
+        color: paletteAt(game.entries.length).name,
+        taps: [], total: null
+      });
+      const ids = game.entries.map(function (e) { return e.id; });
+      game.matches = game.elim === 'double' ? E.buildDoubleElim(ids) : E.buildSingleElim(ids);
+      E.resolveBracket(game.def, game.matches);
       save(); render();
     });
   }
