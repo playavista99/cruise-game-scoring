@@ -714,7 +714,7 @@
       id: E.uid('g'), templateId: t.id, name: t.name, icon: t.icon, color: t.color,
       def: clone(draft.def), format: draft.format, entryKind: draft.entryKind,
       scoreMode: draft.scoreMode, elim: draft.elim,
-      entries: clone(draft.entries), matches: [], playoffMatches: null,
+      entries: clone(draft.entries), matches: [], playoffMatches: null, playoffField: null,
       status: 'playing', winnerId: null, createdAt: Date.now(), finishedAt: null
     };
     game.entries.forEach(function (e, i) {
@@ -996,7 +996,8 @@
       '<button class="btn small secondary" id="editPlayersBtn">👥 Edit players</button>' +
       '<button class="btn small secondary" id="gameSettingsBtn">⚙ Game settings</button></div>';
     if (game.format === 'quick') h += quickPlayHTML(game);
-    else if (game.format === 'bracket') h += bracketPlayHTML(game, game.matches, 'brk') + bracketAddHTML(game);
+    else if (game.format === 'bracket') h += bracketPlayHTML(game, game.matches, 'brk') +
+      '<button class="btn block" id="viewBracketBtn" style="margin:10px 0">🏆 View bracket</button>' + bracketAddHTML(game);
     else h += rrPlayHTML(game);
     h += '<hr class="divider">' +
       '<button class="btn block" id="finishBtn"' + (canFinish(game) ? '' : ' disabled') + '>Finish game</button>' +
@@ -1019,7 +1020,11 @@
     const fb = document.getElementById('finishBtn');
     if (fb) fb.addEventListener('click', function () { finishGame(game); });
     if (game.format === 'quick') bindQuick(game);
-    else if (game.format === 'bracket') { bindMatchCards(game, game.matches, 'brk'); bindBracketAdd(game); }
+    else if (game.format === 'bracket') {
+      bindMatchCards(game, game.matches, 'brk'); bindBracketAdd(game);
+      const vb = document.getElementById('viewBracketBtn');
+      if (vb) vb.addEventListener('click', function () { go('bracketView', game.id); });
+    }
     else bindRR(game);
   };
 
@@ -1215,8 +1220,8 @@
     const src = side === 'a' ? m.srcA : m.srcB;
     if (src && (src.t === 'win' || src.t === 'lose')) {
       const srcMatch = matches.find(function (x) { return x.id === src.m; });
-      const lbl = srcMatch ? 'M' + (matches.indexOf(srcMatch) + 1) : '';
-      return (src.t === 'win' ? 'Winner of ' : 'Loser of ') + lbl;
+      if (!srcMatch) return 'TBD';
+      return (src.t === 'win' ? 'Winner of ' : 'Loser of ') + matchStageName(game, matches, srcMatch);
     }
     return 'TBD';
   }
@@ -1364,9 +1369,30 @@
     if (stage === 'gf') return 'Grand Final';
     if (round === totalRounds) return 'Final';
     if (round === totalRounds - 1) return 'Semifinals';
+    if (round === totalRounds - 2) return 'Quarterfinals';
     return 'Round ' + round;
   }
-  function bracketPlayHTML(game, matches, where) {
+  /* Friendly name for one bracket match: its stage/round name plus its
+     number within the round — "Quarterfinal 1", "Semifinal 2",
+     "Winners SF 2", "Losers Final", "Grand Final". Feeder labels
+     ("Winner of Semifinal 1") are built from this, so the whole
+     bracket reads properly before any of it is played. */
+  function matchStageName(game, matches, m) {
+    if (m.stage === 'gf') return 'Grand Final';
+    const stageMs = matches.filter(function (x) { return x.stage === m.stage; });
+    let total = 0;
+    stageMs.forEach(function (x) { if (x.round > total) total = x.round; });
+    const inRound = stageMs.filter(function (x) { return x.round === m.round; });
+    const idx = inRound.indexOf(m) + 1;
+    const prefix = m.stage === 'wb' ? 'Winners ' : (m.stage === 'lb' ? 'Losers ' : '');
+    let base;
+    if (m.round === total) base = 'Final';
+    else if (m.round === total - 1) base = prefix ? 'SF' : 'Semifinal';
+    else if (m.round === total - 2) base = prefix ? 'QF' : 'Quarterfinal';
+    else base = 'Round ' + m.round;
+    return prefix + base + (inRound.length > 1 ? ' ' + idx : '');
+  }
+  function bracketPlayHTML(game, matches, where, noBanner) {
     let h = '';
     const stages = where === 'po'
       ? [['brk', 'Playoff'], ['wb', 'Winners bracket'], ['lb', 'Losers bracket'], ['gf', '']]
@@ -1386,7 +1412,7 @@
       });
     });
     const champ = E.resolveBracket(game.def, matches);
-    if (champ) h += '<div class="winnerbanner"><div class="crown">🏆</div><div class="sub" style="color:#cfe8f5">Champion</div><div class="wname">' + nameWithDotHTML(game, champ) + '</div></div>';
+    if (champ && !noBanner) h += '<div class="winnerbanner"><div class="crown">🏆</div><div class="sub" style="color:#cfe8f5">Champion</div><div class="wname">' + nameWithDotHTML(game, champ) + '</div></div>';
     return h;
   }
 
@@ -1440,7 +1466,15 @@
     // Mid-game walk-ups (v1.4). Blocked once the playoff has started.
     if (game.playoffMatches) {
       h += '<div class="card"><span class="sub">Players can’t be added once the playoff has started.</span></div>';
-      h += '<h2>Playoff bracket</h2>' + bracketPlayHTML(game, game.playoffMatches, 'po');
+      h += '<h2>Playoff bracket</h2>' +
+        '<button class="btn block" id="viewBracketBtn">🏆 View bracket</button>';
+      if (playoffScored(game)) {
+        h += '<p class="note" style="text-align:center">Bracket locked — a playoff match has been scored. To swap a person, use Edit players.</p>';
+      } else {
+        h += '<button class="btn secondary block" id="regenBracketBtn">↻ Regenerate bracket</button>' +
+          '<p class="note" style="text-align:center">Review the field — replace a player from the standings — and rebuild the bracket. No playoff match has been scored yet.</p>';
+      }
+      h += bracketPlayHTML(game, game.playoffMatches, 'po');
     } else {
       h += '<h3>Add a walk-up</h3><div class="entryrow">' +
         '<input type="text" class="nm" id="rrWalkName" placeholder="Name" autocomplete="off">' +
@@ -1474,14 +1508,19 @@
     });
     const sp = document.getElementById('startPlayoffBtn');
     if (sp) sp.addEventListener('click', function () {
-      const st = E.computeStandings(game.entries, game.matches, game.def);
-      const k = Math.min(game.playoffSize, game.entries.length);
-      const seeds = st.slice(0, k).map(function (r) { return r.id; });
-      game.playoffMatches = game.playoffElim === 'double' ? E.buildDoubleElim(seeds) : E.buildSingleElim(seeds);
-      game.playoffMatches.forEach(function (m) { m.stage = m.stage === 'brk' ? 'brk' : m.stage; });
-      E.resolveBracket(game.def, game.playoffMatches);
-      game.rrNote = null;
-      save(); render();
+      // v1.6: review the field first — the bracket is only built when
+      // staff tap "Generate bracket" on the field screen.
+      ensurePlayoffField(game);
+      save();
+      go('playoffField', game.id);
+    });
+    const vb = document.getElementById('viewBracketBtn');
+    if (vb) vb.addEventListener('click', function () { go('bracketView', game.id); });
+    const rb = document.getElementById('regenBracketBtn');
+    if (rb) rb.addEventListener('click', function () {
+      ensurePlayoffField(game); // the field as last generated is preserved
+      save();
+      go('playoffField', game.id);
     });
     const wa = document.getElementById('rrWalkAdd');
     if (wa) wa.addEventListener('click', function () {
@@ -1523,6 +1562,192 @@
       save(); render();
     });
   }
+
+  /* ----- Playoff field + whole-bracket view (v1.6) -----
+     Format-level features: they hang off game.format / playoffMatches
+     only, never off a game definition or template. After a round robin,
+     staff review the playoff FIELD (game.playoffField — entry IDs in
+     seed order) before anything is built: they can change the size,
+     flip single/double elimination, and replace any seed with another
+     player from the standings. "Generate bracket" builds
+     game.playoffMatches from the field with the standard seeding
+     (1v8, 5v4, 3v6, 7v2 — engines seedPositions, unchanged). While no
+     playoff match is scored, generating again replaces the bracket
+     wholesale — that is the regeneration path. Once a playoff match is
+     scored the field is final (Edit players substitutions, which work
+     by entry ID, remain available). */
+  let pfReplaceSeed = null;  // seed index whose replacement picker is open
+  let pfFlash = null;        // one-shot note for the field screen
+  function playoffStandingsLine(r) {
+    return r.w + 'W–' + r.l + 'L' + (r.d ? '–' + r.d + 'D' : '') + ' · ' +
+      (r.diff > 0 ? '+' : '') + r.diff + ' diff · ' + r.pf + ' pts';
+  }
+  function derivePlayoffField(game) {
+    const st = E.computeStandings(game.entries, game.matches, game.def);
+    const k = Math.min(Math.max(2, game.playoffSize || 0), game.entries.length);
+    game.playoffField = st.slice(0, k).map(function (r) { return r.id; });
+    return game.playoffField;
+  }
+  function ensurePlayoffField(game) {
+    const k = Math.min(Math.max(2, game.playoffSize || 0), game.entries.length);
+    const f = game.playoffField;
+    let valid = Array.isArray(f) && f.length === k;
+    if (valid) {
+      const seen = {};
+      valid = f.every(function (id) {
+        if (seen[id]) return false;
+        seen[id] = true;
+        return game.entries.some(function (e) { return e.id === id; });
+      });
+    }
+    if (!valid) derivePlayoffField(game);
+    return game.playoffField;
+  }
+  function playoffScored(game) {
+    return !!(game.playoffMatches && game.playoffMatches.some(function (m) { return m.scored && !m.autoBye; }));
+  }
+  function buildPlayoffFromField(game) {
+    const seeds = (game.playoffField || []).slice();
+    game.playoffMatches = game.playoffElim === 'double'
+      ? E.buildDoubleElim(seeds)
+      : E.buildSingleElim(seeds);
+    E.resolveBracket(game.def, game.playoffMatches);
+    game.rrNote = null;
+  }
+  SCREENS.playoffField = function (gameId) {
+    const game = getGame(gameId);
+    if (!game || game.format !== 'rr' || (game.playoffSize || 0) < 2) {
+      return '<p class="empty">No playoff field for this game.</p>' +
+        '<button class="btn ghost block" id="pfBackBtn">Back</button>';
+    }
+    ensurePlayoffField(game);
+    const flash = pfFlash; pfFlash = null;
+    const st = E.computeStandings(game.entries, game.matches, game.def);
+    const lineById = {};
+    st.forEach(function (r) { lineById[r.id] = r; });
+    let h = '<h1>Playoff field — top ' + game.playoffField.length + '</h1>' +
+      '<p class="note">Seeded from the final round robin standings (standard seeding: 1 plays ' +
+      game.playoffField.length + ', 2 plays ' + (game.playoffField.length - 1) + ', and so on). ' +
+      'Replace anyone who can’t play, then generate the bracket.</p>';
+    if (flash) h += '<div class="card" style="border-left:7px solid #0b6fa4">' + esc(flash) + '</div>';
+    h += '<h2>Playoff size</h2>' + segHTML('segPfSize', [
+      { v: '2', label: 'Top 2' }, { v: '4', label: 'Top 4' }, { v: '8', label: 'Top 8' }], String(game.playoffSize)) +
+      '<h2>Playoff style</h2>' + segHTML('segPfElim', [
+        { v: 'single', label: 'Single elimination' }, { v: 'double', label: 'Double elimination' }], game.playoffElim) +
+      '<h2>Seeds</h2>';
+    const inField = {};
+    game.playoffField.forEach(function (id) { inField[id] = true; });
+    game.playoffField.forEach(function (id, i) {
+      const r = lineById[id];
+      h += '<div class="card row" style="margin:6px 0;padding:10px 12px"><span class="seedno">' + (i + 1) + '</span>' +
+        '<div class="grow"><span class="gamename" style="font-size:16px">' + nameWithDotHTML(game, id) + '</span>' +
+        (r ? '<div class="sub">' + esc(playoffStandingsLine(r)) + '</div>' : '') + '</div>' +
+        '<button class="btn small secondary" data-replace-seed="' + i + '">Replace…</button></div>';
+      if (pfReplaceSeed === i) {
+        const cands = st.filter(function (row) { return !inField[row.id]; });
+        h += '<div class="card" style="margin:2px 0 10px;padding:10px 12px"><div class="sub" style="margin-bottom:6px">Replace seed ' + (i + 1) + ' with…</div>';
+        if (!cands.length) h += '<p class="note">Everyone is already in the field.</p>';
+        cands.forEach(function (row) {
+          h += '<button class="btn block secondary" data-pick-replacement="' + row.id + '" style="margin:4px 0">' +
+            nameWithDotHTML(game, row.id) + ' <span class="sub">(' + esc(playoffStandingsLine(row)) + ')</span></button>';
+        });
+        h += '<button class="btn ghost block" id="pfReplaceCancel">Cancel</button></div>';
+      }
+    });
+    h += '<button class="btn ghost block" id="pfResetBtn">Reset field to standings</button>' +
+      '<button class="btn block" id="pfGenerateBtn" style="margin-top:12px">Generate bracket</button>' +
+      '<button class="btn ghost block" id="pfBackBtn">Back to game</button>';
+    return h;
+  };
+  BINDS.playoffField = function (gameId) {
+    const game = getGame(gameId);
+    const back = document.getElementById('pfBackBtn');
+    if (back) back.addEventListener('click', function () { go('play', gameId); });
+    if (!game || game.format !== 'rr') return;
+    bindSeg('segPfSize', null, function (v) {
+      const size = parseInt(v, 10);
+      if (size === game.playoffSize) return;
+      const st = E.computeStandings(game.entries, game.matches, game.def);
+      const oldK = Math.min(game.playoffSize || 0, game.entries.length);
+      const wasCustom = Array.isArray(game.playoffField) &&
+        JSON.stringify(game.playoffField) !== JSON.stringify(st.slice(0, oldK).map(function (r) { return r.id; }));
+      game.playoffSize = size;
+      derivePlayoffField(game);
+      pfReplaceSeed = null;
+      pfFlash = wasCustom ? 'Field reset to the top ' + game.playoffField.length + ' from the standings — replacements were cleared.' : null;
+      save(); render();
+    });
+    bindSeg('segPfElim', null, function (v) { game.playoffElim = v; save(); });
+    document.querySelectorAll('[data-replace-seed]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        pfReplaceSeed = parseInt(b.getAttribute('data-replace-seed'), 10);
+        render();
+      });
+    });
+    document.querySelectorAll('[data-pick-replacement]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        if (pfReplaceSeed === null) return;
+        game.playoffField[pfReplaceSeed] = b.getAttribute('data-pick-replacement');
+        pfReplaceSeed = null;
+        save(); render();
+      });
+    });
+    const cancel = document.getElementById('pfReplaceCancel');
+    if (cancel) cancel.addEventListener('click', function () { pfReplaceSeed = null; render(); });
+    const reset = document.getElementById('pfResetBtn');
+    if (reset) reset.addEventListener('click', function () {
+      derivePlayoffField(game);
+      pfReplaceSeed = null;
+      pfFlash = 'Field reset to the top ' + game.playoffField.length + ' from the standings.';
+      save(); render();
+    });
+    const gen = document.getElementById('pfGenerateBtn');
+    if (gen) gen.addEventListener('click', function () {
+      buildPlayoffFromField(game);
+      pfReplaceSeed = null;
+      save();
+      go('play', game.id);
+    });
+  };
+
+  /* ----- Whole-bracket view -----
+     The complete bracket as one chart on its own screen: every round,
+     including matches whose players aren't decided yet (their slots
+     read "Winner of Semifinal 1" and the like). Scoring works here
+     exactly as on the play screen — same cards, same inline scorer. */
+  function bracketViewContext(game) {
+    if (game.format === 'rr' && game.playoffMatches) return { matches: game.playoffMatches, where: 'po' };
+    if (game.format === 'bracket') return { matches: game.matches, where: 'brk' };
+    return null;
+  }
+  SCREENS.bracketView = function (gameId) {
+    const game = getGame(gameId);
+    if (!game) return '<p class="empty">Game not found.</p>';
+    const ctx = bracketViewContext(game);
+    if (!ctx) {
+      return '<p class="empty">No bracket for this game yet.</p>' +
+        '<button class="btn ghost block" id="bvBackBtn">Back to game</button>';
+    }
+    let h = '<div class="card row"><div>' + badge(game) + '</div><div class="grow">' +
+      '<div class="gamename">' + esc(game.name) + '</div><div class="sub">' + esc(formatLabel(game)) + ' · ' +
+      (ctx.where === 'po' ? 'Playoff bracket' : 'Bracket') + '</div></div></div>';
+    const champ = E.resolveBracket(game.def, ctx.matches);
+    if (champ) {
+      h += '<div class="winnerbanner"><div class="crown">🏆</div><div class="sub" style="color:#cfe8f5">Champion</div>' +
+        '<div class="wname">' + nameWithDotHTML(game, champ) + '</div></div>';
+    }
+    h += bracketPlayHTML(game, ctx.matches, ctx.where, true);
+    h += '<button class="btn ghost block" id="bvBackBtn" style="margin-top:12px">Back to game</button>';
+    return h;
+  };
+  BINDS.bracketView = function (gameId) {
+    const game = getGame(gameId);
+    const back = document.getElementById('bvBackBtn');
+    if (back) back.addEventListener('click', function () { go('play', gameId); });
+    if (!game) return;
+    const ctx = bracketViewContext(game);
+    if (ctx) bindMatchCards(game, ctx.matches, ctx.where);
+  };
 
   /* ----- Mid-game adds + RR schedule regeneration (v1.4) -----
      Scored RR matches are sacred: regeneration keeps every one of
@@ -2030,7 +2255,7 @@
       elim: old.elim, entries: old.entries.map(function (e, i) {
         return { id: e.id, name: e.name, cabin: e.cabin, members: e.members, color: colorByName(e.color || '') ? e.color : paletteAt(i).name, taps: [], total: null };
       }),
-      matches: [], playoffMatches: null, status: 'playing', winnerId: null,
+      matches: [], playoffMatches: null, playoffField: null, status: 'playing', winnerId: null,
       createdAt: Date.now(), finishedAt: null
     };
     if (old.format === 'quick' && qsActive(old)) {
