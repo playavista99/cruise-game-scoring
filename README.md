@@ -107,7 +107,27 @@ Setups are stored **on-device only** (localStorage, like games and
 history) — they deliberately do not sync through Supabase; cloud
 sync would need a new table and is out of scope.
 
-**Data:** games, templates, saved setups and history are stored in
+**Cruises:** the home screen's *Cruises* section files a whole
+sailing's games together. *➕ New cruise* asks for a name (ship and
+start/end dates are optional); opening a cruise shows its page: a
+**summary card** (games played, distinct players, and a wins tally
+per player — joint winners each count), its in-progress and finished
+games, and a **roster** — the cruise's own player list. Anyone who
+plays a game in the cruise joins the roster automatically (matched
+by name; a cabin learned later fills in), including mid-game
+walk-ups; substitutes brought in through Edit players do not join.
+The roster can also be managed by hand on the cruise page (add,
+edit, remove — removing someone never changes games already
+played). At sign-up inside a cruise (Individuals), the roster
+appears as tap-to-pick rows: tap who is playing, leave the no-shows
+untapped. On **any** sign-up, *Copy players from another game…*
+adds a previous game's players to the list (same-cruise games
+first, names already listed skipped), ready to edit before
+starting. *Delete cruise* removes the cruise and its roster only —
+its games stay, as standalone games. Deeper stats analysis is a
+planned later phase; the summary's wins tally is its seed.
+
+**Data:** games, templates, saved setups, cruises and history are stored in
 the browser's localStorage on the device. Nothing about players or
 games leaves the device. An optional staff account (Supabase Auth)
 syncs *custom templates only* across a staffer's devices.
@@ -132,7 +152,7 @@ bottom of the home page. Feedback is written to the Supabase
 | `sw.js`, `manifest.webmanifest`, `icon.svg` | Offline shell / installable PWA bits |
 | `supabase/schema.sql` | One-time database setup for the optional account |
 | `tests/engines.test.mjs` | Engine verification: `node tests/engines.test.mjs` |
-| `tests/quick-rounds.test.mjs`, `tests/rr-adds.test.mjs`, `tests/edit-players.test.mjs`, `tests/playoff-field.test.mjs`, `tests/winner-flow.test.mjs`, `tests/setup-features.test.mjs` | End-to-end DOM tests (jsdom) driving the shipped app: `node tests/<name>.test.mjs` |
+| `tests/quick-rounds.test.mjs`, `tests/rr-adds.test.mjs`, `tests/edit-players.test.mjs`, `tests/playoff-field.test.mjs`, `tests/winner-flow.test.mjs`, `tests/setup-features.test.mjs`, `tests/cruises.test.mjs` | End-to-end DOM tests (jsdom) driving the shipped app: `node tests/<name>.test.mjs` |
 
 ## Hosting (GitHub Pages)
 
