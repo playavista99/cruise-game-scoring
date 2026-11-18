@@ -153,6 +153,18 @@ table.stand tr.outrow td { opacity: 0.55; }
 }
 .palettebtn.on { border-color: #0b6fa4; outline: 3px solid #7fc4e8; }
 
+/* ----- Edit players ----- */
+.eprow { margin: 8px 0; padding: 12px; }
+.ephint { color: #b3261e; font-weight: 600; margin: 6px 0 0; }
+.editbtn {
+  background: none; border: 0; cursor: pointer; color: #0b6fa4;
+  font-size: 15px; padding: 4px 6px; min-width: 32px; min-height: 32px;
+  vertical-align: middle; border-radius: 8px;
+}
+.editbtn:active { background: #e2ebf2; }
+[data-nameedit] { cursor: pointer; }
+input.nameedit { min-height: 44px; padding: 8px 10px; }
+
 /* ----- Header ☰ menu ----- */
 .topbtns { display: flex; align-items: center; gap: 8px; }
 .menupanel {
