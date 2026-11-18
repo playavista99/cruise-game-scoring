@@ -159,7 +159,7 @@ const pairOf = (x, y) => [x, y].sort().join('|');
   ok(game.playoffMatches.length === 7, 'b: Top 8 single-elim bracket has 7 matches');
   ok($('#viewBracketBtn'), 'b: View bracket button in the playoff section');
   click($('#viewBracketBtn'), 'open bracket view');
-  ok(!!$('#bvBackBtn'), 'b: bracket view screen is showing');
+  ok(!!$('#navBackBtn'), 'b: bracket view screen is showing (nav row)');
   const txt = bodyText(w);
   ok(txt.includes('Quarterfinals') && txt.includes('Semifinals') && txt.includes('Final'),
     'b: bracket view lists Quarterfinals, Semifinals and the Final');
@@ -231,7 +231,7 @@ const pairOf = (x, y) => [x, y].sort().join('|');
   ok(game.matches.length === 7, 'e: 8-player bracket has 7 matches');
   ok($('#viewBracketBtn'), 'e: View bracket button on the bracket play screen');
   click($('#viewBracketBtn'), 'open bracket view');
-  ok(!!$('#bvBackBtn'), 'e: bracket view screen is showing');
+  ok(!!$('#navBackBtn'), 'e: bracket view screen is showing (nav row)');
   const txt = bodyText(w);
   ok(txt.includes('Quarterfinals') && txt.includes('Semifinals') && txt.includes('Final'),
     'e: bracket view shows all 3 rounds');
