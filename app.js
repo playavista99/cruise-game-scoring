@@ -9,9 +9,10 @@
 
   /* The running build's version. This is the code's single source of
      truth; version.json (checked over the network), the menu fallback
-     line in index.html, and the service-worker cache name are bumped
+     line in index.html, the <meta name="app-version"> tag in
+     index.html, and the service-worker cache name are bumped
      alongside it on every release — see the README release checklist. */
-  const APP_VERSION = '2.1';
+  const APP_VERSION = '2.1.1';
   const UPDATE_FLAG_KEY = 'cgsa-just-updated';
   function parseVersion(v) {
     return String(v === null || v === undefined ? '' : v).trim().replace(/^v/i, '').split('.').map(function (part) {
@@ -3415,6 +3416,51 @@
   window.CruiseGameScoring.checkForUpdates = checkForUpdates;
   window.CruiseGameScoring.performUpdate = performUpdate;
 
+  /* ----- Self-healing version guard -----
+     GitHub Pages publishes file by file, and the service worker's
+     network-first cache fills per file — so a phone that loads the
+     app mid-deploy can end up running a MIXED shell: a new index.html
+     (whose menu/nav markup mentions things the code must wire up)
+     paired with an older app.js that has no handlers for them, or the
+     reverse. The new buttons then render but are dead, which is how
+     v2.1's Home buttons failed on one phone while the brand button
+     (wired by every build) kept working.
+     index.html therefore carries <meta name="app-version">, the
+     pair-mate of APP_VERSION. On startup, if the two disagree — or
+     the meta is missing entirely, which means this app.js is running
+     under an index.html from before the guard existed — the shell is
+     mixed: clear the shell caches and reload once, so the browser
+     refetches a consistent pair. A sessionStorage flag per
+     version-pair makes it heal at most once per session: if the
+     reload still serves the same mixed pair (offline, cache-only),
+     the app simply runs as-is instead of looping, and retries next
+     session. Reloading is safe here for the same reason reopening the
+     app is: every game, draft and setting is written to localStorage
+     as it changes, so nothing in progress is lost. */
+  function shellVersionGuard() {
+    const meta = document.querySelector('meta[name="app-version"]');
+    const metaVersion = meta ? String(meta.getAttribute('content') || '').trim() : '';
+    if (metaVersion === APP_VERSION) return Promise.resolve(false);
+    const flagKey = 'cgs-heal-' + metaVersion + '|' + APP_VERSION;
+    let armed = false;
+    try {
+      if (window.sessionStorage.getItem(flagKey) !== '1') {
+        window.sessionStorage.setItem(flagKey, '1');
+        /* Only act if the flag truly stuck: a store that throws or
+           silently drops the write (some private modes) could never
+           prove "once per session", and healing without it could
+           reload-loop. */
+        armed = window.sessionStorage.getItem(flagKey) === '1';
+      }
+    } catch (e) { armed = false; }
+    if (!armed) return Promise.resolve(false);
+    return deleteShellCaches().catch(function () { /* reload anyway */ }).then(function () {
+      reloadApp();
+      return true;
+    });
+  }
+  window.CruiseGameScoring.shellVersionGuard = shellVersionGuard;
+
   // WhatsApp entry: shown only when an invite link is configured in config.js.
   (function () {
     const wa = document.getElementById('menuWhatsappBtn');
@@ -3566,4 +3612,7 @@
   }
   sbInit();
   render();
+  /* After the first render: if this shell is a mixed-version pair,
+     heal it (once per session) — see shellVersionGuard above. */
+  shellVersionGuard();
 })();
