@@ -54,6 +54,25 @@ and swaps are recorded on the finish screen, in history, and in the
 shared results text ("Subs: Maria for John"). Finished games in
 history are a record and can't be edited.
 
+**Playoff field & bracket view:** when a round robin with a playoff
+finishes, *Start playoff* opens a **field screen** before anything is
+built: the top 2 / 4 / 8 from the final standings (size and
+single/double style adjustable there), each seed with its standings
+line. Any seed can be **replaced** with another player from the
+standings — for someone who can't stay for the playoff — and the field
+can be reset to the standings at any time. *Generate bracket* then
+builds the bracket with standard seeding (1v8, 5v4, 3v6, 7v2, so 1
+and 2 can't meet before the final). While no playoff match has been
+scored, **↻ Regenerate bracket** returns to the field screen (field
+preserved) and generating again rebuilds the bracket wholesale; once
+a playoff match is scored the field is locked (use Edit players to
+swap a person). The **🏆 View bracket** button — on round robin
+playoffs and standalone bracket games alike — shows the whole bracket
+as one chart: every round, with undecided slots reading "Winner of
+Semifinal 1" / "Loser of Winners SF 2" instead of match numbers, and
+matches can be scored right from the chart. These are format-level
+features — they work the same for every game, built-in or custom.
+
 **Entry colors:** every player or team in every game gets a color
 (Red, Blue, Green, Yellow, Orange, Purple, Black, White), assigned
 automatically in sign-up order — so Bean Bag Toss starts Red vs Blue —
