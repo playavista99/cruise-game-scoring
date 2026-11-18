@@ -143,9 +143,12 @@ its games stay, as standalone games. Deeper stats analysis is a
 planned later phase; the summary's wins tally is its seed.
 
 **Data:** games, templates, saved setups, cruises and history are stored in
-the browser's localStorage on the device. Nothing about players or
-games leaves the device. An optional staff account (Supabase Auth)
-syncs *custom templates only* across a staffer's devices.
+the browser's localStorage on the device. An optional staff account
+(Supabase Auth) syncs *custom templates only* across a staffer's
+devices. The single exception is the **live player view** (below):
+when staff explicitly share a game, a first-names-only snapshot of
+that game is published for players — nothing else leaves the device,
+and cabins never do.
 
 **Navigation:** the header title is centered, and the ☰ menu's
 first item is *Home*. Every screen except Home itself carries one
@@ -232,19 +235,57 @@ until at least one distance exists. Closest Wins is Quick
 Score-only by design: its setup locks the format, hides the
 rounds option, and has no scoring-buttons editor.
 
+**Live player view (v2.3).** The **👥 Player view** button — on the
+play screen and the finish screen — shares a game with the players
+watching it. *Start sharing* publishes a view-only snapshot of the
+game to the Supabase `shared_views` table under an unguessable
+12-character code and shows a QR code (drawn on-device, like the
+app-share code) plus a link of the form
+`…/view.html?c=<code>`. Players open it on their own phones and see
+the game's standings, the round or matches being played now, and
+what's up next (bracket fixtures keep their "Winner of Semifinal 1"
+labels until decided; a results-based round robin says its next
+round is paired from the standings when the current one finishes).
+The page refreshes itself every 20 seconds, and the snapshot is
+re-published — debounced, fire-and-forget — after every scoring
+change, when the sheet opens, and when sharing starts. *Stop
+sharing* (two-tap confirm) deletes the published view and clears
+the code from the game.
+
+Privacy is a hard rule, enforced where the payload is built:
+**individuals appear by first name only** (the first word of their
+name), **teams appear under their team name and never their member
+names**, and **cabin numbers are never published** — the builder
+does not read them. The table itself has no direct read policy:
+reads go only through the `get_shared_view(code)` database
+function, which returns a payload for an exact code that hasn't
+expired, so views can't be listed or browsed. Each push rolls the
+expiry forward to **24 hours** after that update; a view nobody
+updates quietly disappears a day later.
+
+Two honest limits: sharing **needs an internet connection** (the
+staff phone publishes, the players' phones load the page) —
+scoring itself never does, and a failed push never blocks or
+errors the scoring UI; the sheet simply says it couldn't start or
+update. And the feature needs its database table: until
+`supabase/schema.sql`'s `shared_views` block has been run in the
+project, *Start sharing* fails with that same plain "couldn't
+start" message instead of pretending to work.
+
 ## Files
 
 | File | What it is |
 |---|---|
 | `index.html`, `styles.css`, `app.js` | The app |
+| `view.html` | The standalone player page for the live player view (v2.3) — self-contained (inline CSS/JS), reads one shared view by code via the `get_shared_view` database function; deliberately NOT part of the offline shell |
 | `engines.js` | Tournament engines (brackets, round robin, Swiss pairing, standings) plus the camera-measurement homography — shared by the page and the tests |
 | `qr.js` | QR Code Generator for JavaScript (Kazuhiko Arase, MIT) — draws the share QR code on-device, works offline |
 | `config.js` | Supabase URL + anon key for the optional account (blank = accounts off), plus `WHATSAPP_GROUP_URL` for the menu's WhatsApp entry (blank = entry hidden) |
 | `version.json` | Published version marker, fetched by the menu's update check |
 | `sw.js`, `manifest.webmanifest`, `icon.svg` | Offline shell / installable PWA bits |
-| `supabase/schema.sql` | One-time database setup for the optional account |
+| `supabase/schema.sql` | One-time database setup: staff-account templates, feedback, and the live player view's `shared_views` table + `get_shared_view` function |
 | `tests/engines.test.mjs` | Engine verification: `node tests/engines.test.mjs` |
-| `tests/quick-rounds.test.mjs`, `tests/rr-adds.test.mjs`, `tests/edit-players.test.mjs`, `tests/playoff-field.test.mjs`, `tests/winner-flow.test.mjs`, `tests/setup-features.test.mjs`, `tests/cruises.test.mjs`, `tests/update-check.test.mjs`, `tests/home-flow.test.mjs`, `tests/signup-hint.test.mjs`, `tests/nav.test.mjs`, `tests/version-guard.test.mjs`, `tests/inprogress-delete.test.mjs`, `tests/measure.test.mjs` | End-to-end DOM tests (jsdom) driving the shipped app: `node tests/<name>.test.mjs` |
+| `tests/quick-rounds.test.mjs`, `tests/rr-adds.test.mjs`, `tests/edit-players.test.mjs`, `tests/playoff-field.test.mjs`, `tests/winner-flow.test.mjs`, `tests/setup-features.test.mjs`, `tests/cruises.test.mjs`, `tests/update-check.test.mjs`, `tests/home-flow.test.mjs`, `tests/signup-hint.test.mjs`, `tests/nav.test.mjs`, `tests/version-guard.test.mjs`, `tests/inprogress-delete.test.mjs`, `tests/measure.test.mjs`, `tests/player-view.test.mjs` | End-to-end DOM tests (jsdom) driving the shipped app: `node tests/<name>.test.mjs` |
 
 ## Release checklist
 
@@ -283,7 +324,13 @@ Accounts are optional and the app works without them. To switch them on:
    through the API — read submissions in the Supabase Table editor).
    Feedback needs that table: if it hasn't been created yet, the
    app's feedback form reports that the message couldn't be sent
-   instead of pretending it worked.
+   instead of pretending it worked. The same script also creates
+   the **`shared_views` table** and the **`get_shared_view`
+   function** for the live player view (v2.3) — code-targeted
+   anonymous writes, reads only through the function, 24-hour
+   rolling expiry. Player view needs them just like feedback needs
+   its table: until the script has been run, *Start sharing* in
+   the app reports that it couldn't start.
 3. In **Project Settings → API**, copy the **Project URL** and the
    **anon public** key (never the service_role key).
 4. Paste both into `config.js` in this repo and commit.
