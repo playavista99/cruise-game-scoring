@@ -146,8 +146,18 @@
     if (src.t === 'empty') return { state: 'empty' };
     const m = byId[src.m];
     if (!m || !m.resolved) return { state: 'pending' };
-    if (src.t === 'win') return m.winnerId ? { state: 'ready', id: m.winnerId } : { state: 'empty' };
-    return m.loserId ? { state: 'ready', id: m.loserId } : { state: 'empty' };
+    // A feeder match that has not been played yet is PENDING — its
+    // winner/loser doesn't exist yet, but the slot is not empty. Only
+    // a feeder that resolved with nobody advancing (an auto-bye with
+    // no winner) is genuinely EMPTY. (Before this distinction, an
+    // undecided final was marked scored/auto-bye and scoring one
+    // semifinal instantly crowned its winner champion.)
+    if (src.t === 'win') {
+      if (m.winnerId) return { state: 'ready', id: m.winnerId };
+      return m.scored ? { state: 'empty' } : { state: 'pending' };
+    }
+    if (m.loserId) return { state: 'ready', id: m.loserId };
+    return m.scored ? { state: 'empty' } : { state: 'pending' };
   }
 
   function resolveBracket(def, matches) {
