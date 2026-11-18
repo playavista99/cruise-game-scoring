@@ -302,5 +302,57 @@ for (let n = 2; n <= 12; n++) {
   }
 }
 
+/* ---------- camera measurement: homography (v2.2) ---------- */
+{
+  // Reference presets ship with the agreed real-world sizes.
+  const refs = Object.fromEntries(E.MEASURE_REFS.map((r) => [r.id, r]));
+  ok(refs.cornhole && refs.cornhole.w === 24 && refs.cornhole.h === 48, 'measure: cornhole ref is 24x48');
+  ok(refs.card && refs.card.w === 3.37 && refs.card.h === 2.125, 'measure: credit card ref is 3.37x2.125');
+  ok(refs.letter && refs.letter.w === 8.5 && refs.letter.h === 11, 'measure: letter ref is 8.5x11');
+
+  const planeCorners = [{ x: 0, y: 0 }, { x: 24, y: 0 }, { x: 24, y: 48 }, { x: 0, y: 48 }];
+  const applyH = (H, p) => E.planePoint(H, p.x, p.y); // planePoint applies any H, either direction
+
+  // Axis-aligned similarity (scale + offset): exact geometry.
+  const Hsim = [10, 0, 5, 0, 10, 7, 0, 0, 1];
+  const imgSim = planeCorners.map((p) => applyH(Hsim, p));
+  const Hrec = E.computeHomography(imgSim, planeCorners);
+  ok(!!Hrec, 'measure: similarity case solves');
+  const dSim = E.measureDistance(Hrec, applyH(Hsim, { x: 2, y: 3 }), applyH(Hsim, { x: 8, y: 11 }));
+  ok(dSim !== null && Math.abs(dSim - 10) < 0.05, `measure: similarity distance 10in recovered (got ${dSim})`);
+
+  // A genuinely projective view (tilted camera): synthesize image
+  // points with a known H, then check the recovered distances.
+  const Hproj = [12, 1.5, 300, 0.5, 11, 400, 0.0009, 0.0013, 1];
+  const imgProj = planeCorners.map((p) => applyH(Hproj, p));
+  const Hp = E.computeHomography(imgProj, planeCorners);
+  ok(!!Hp, 'measure: projective case solves');
+  const pairs = [
+    [{ x: 1, y: 2 }, { x: 20, y: 40 }],
+    [{ x: 12, y: 24 }, { x: 13.5, y: 24 }],   // a 1.5in gap at board center
+    [{ x: 0, y: 0 }, { x: 24, y: 48 }],       // the full diagonal
+    [{ x: 23.9, y: 47.9 }, { x: 0.1, y: 0.1 }]
+  ];
+  pairs.forEach(([a, b], i) => {
+    const truth = Math.hypot(b.x - a.x, b.y - a.y);
+    const got = E.measureDistance(Hp, applyH(Hproj, a), applyH(Hproj, b));
+    ok(got !== null && Math.abs(got - truth) < 0.05,
+      `measure: projective pair ${i} distance ${truth.toFixed(3)}in recovered (got ${got && got.toFixed(4)})`);
+  });
+  // Recovered plane coordinates land on the true inches, too.
+  const ctr = E.planePoint(Hp, applyH(Hproj, { x: 12, y: 24 }).x, applyH(Hproj, { x: 12, y: 24 }).y);
+  ok(ctr && Math.abs(ctr.x - 12) < 0.05 && Math.abs(ctr.y - 24) < 0.05, 'measure: planePoint recovers board center');
+
+  // Degenerate inputs return null instead of nonsense numbers.
+  const collinear = [{ x: 0, y: 0 }, { x: 10, y: 10 }, { x: 20, y: 20 }, { x: 30, y: 0 }];
+  ok(E.computeHomography(collinear, planeCorners) === null, 'measure: collinear corners -> null');
+  const samePoint = [{ x: 5, y: 5 }, { x: 5, y: 5 }, { x: 5, y: 5 }, { x: 5, y: 5 }];
+  ok(E.computeHomography(samePoint, planeCorners) === null, 'measure: coincident corners -> null');
+  ok(E.computeHomography(planeCorners.slice(0, 3), planeCorners) === null, 'measure: 3 corners -> null');
+  ok(E.computeHomography(null, planeCorners) === null, 'measure: null input -> null');
+  ok(E.measureDistance(null, { x: 0, y: 0 }, { x: 1, y: 1 }) === null, 'measure: distance without H -> null');
+  ok(E.planePoint(null, 1, 2) === null, 'measure: planePoint without H -> null');
+}
+
 console.log(`\n${checks} checks, ${failures} failures`);
 process.exit(failures ? 1 : 0);
