@@ -107,8 +107,21 @@ Setups are stored **on-device only** (localStorage, like games and
 history) — they deliberately do not sync through Supabase; cloud
 sync would need a new table and is out of scope.
 
-**Cruises:** the home screen's *Cruises* section files a whole
-sailing's games together. *➕ New cruise* asks for a name (ship and
+**Home & starting a game (v2.0):** the home screen leads with two
+big actions — *🎮 New game* and *🛳 New cruise* — followed by the
+*Your cruises*, *In progress*, *Saved setups* and *History*
+sections (each shown only when it has something in it). Tapping
+*New game* with at least one cruise on file first asks **Where's
+this game?** — *Standalone game*, or one of the cruises; with no
+cruises it goes straight to the pick screen. Every entry (Home,
+the chooser, and a cruise page's *New game in this cruise*) lands
+on the **same pick-a-game screen**; when the game is headed into a
+cruise, a banner above the list says *🛳 This game will be saved
+in: <cruise>* with a *Make standalone* option that drops the cruise
+and stays on the screen.
+
+**Cruises:** the home screen's *Your cruises* section files a whole
+sailing's games together. *🛳 New cruise* asks for a name (ship and
 start/end dates are optional); opening a cruise shows its page: a
 **summary card** (games played, the whole roster counted as
 players, and a wins tally
@@ -161,7 +174,7 @@ check right now.
 | `sw.js`, `manifest.webmanifest`, `icon.svg` | Offline shell / installable PWA bits |
 | `supabase/schema.sql` | One-time database setup for the optional account |
 | `tests/engines.test.mjs` | Engine verification: `node tests/engines.test.mjs` |
-| `tests/quick-rounds.test.mjs`, `tests/rr-adds.test.mjs`, `tests/edit-players.test.mjs`, `tests/playoff-field.test.mjs`, `tests/winner-flow.test.mjs`, `tests/setup-features.test.mjs`, `tests/cruises.test.mjs`, `tests/update-check.test.mjs` | End-to-end DOM tests (jsdom) driving the shipped app: `node tests/<name>.test.mjs` |
+| `tests/quick-rounds.test.mjs`, `tests/rr-adds.test.mjs`, `tests/edit-players.test.mjs`, `tests/playoff-field.test.mjs`, `tests/winner-flow.test.mjs`, `tests/setup-features.test.mjs`, `tests/cruises.test.mjs`, `tests/update-check.test.mjs`, `tests/home-flow.test.mjs` | End-to-end DOM tests (jsdom) driving the shipped app: `node tests/<name>.test.mjs` |
 
 ## Release checklist
 
