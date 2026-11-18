@@ -70,7 +70,10 @@ swap a person). The **🏆 View bracket** button — on round robin
 playoffs and standalone bracket games alike — shows the whole bracket
 as one chart: every round, with undecided slots reading "Winner of
 Semifinal 1" / "Loser of Winners SF 2" instead of match numbers, and
-matches can be scored right from the chart. These are format-level
+matches can be scored right from the chart. A slot whose feeder match
+has been decided shows that winner's (or loser's) name right away,
+even before the other feeder is played — the match itself still only
+becomes scorable once both players are set. These are format-level
 features — they work the same for every game, built-in or custom.
 
 **Entry colors:** every player or team in every game gets a color
