@@ -119,7 +119,7 @@ click(tempDel, 'second remove tap');
 ok(!rosterNames(w).includes('Temp') && rosterNames(w).join(',') === 'Daniel', 'a: second tap removes; Daniel stays');
 // Home lists the cruise.
 click($('#brandBtn'), 'home');
-ok(bodyText(w).includes('Cruises') && bodyText(w).includes('Sky Princess — Nov 2026'), 'a: home lists the cruise');
+ok(bodyText(w).includes('Your cruises') && bodyText(w).includes('Sky Princess — Nov 2026'), 'a: home lists the cruise under Your cruises');
 ok(bodyText(w).includes('0 games · 1 player'), 'a: home meta counts games + roster players');
 
 /* ============ (b) first game in the cruise: roster sync at start + walk-up ============ */
@@ -202,7 +202,9 @@ ok(g1After.entries.map((e) => e.name).join(',') === 'Ana,Ben,Walt', 'd: game 1 s
 
 /* ============ (e) copy players from another game (standalone sign-up) ============ */
 click($('#brandBtn'), 'home');
-click($('#newGameBtn'), 'new standalone game');
+click($('#newGameBtn'), 'new game');
+ok(bodyText(w).includes("Where's this game?"), 'e: with a cruise on file, New game asks where the game belongs (v2.0 chooser)');
+click($('#destStandalone'), 'choose standalone');
 click($('[data-pick="builtin-soccer"]'), 'pick soccer');
 click($('#segMode button[data-v="total"]'), 'final-total scoring');
 click($('#toSignup'), 'to signup');
@@ -250,7 +252,7 @@ ok(!!$('#copyPlayersBtn'), 'g: copy-players is still offered for Teams');
 /* ============ (h) legacy store without a cruises key ============ */
 {
   const w2 = boot({ templates: [], games: [] });
-  ok(bodyText(w2).includes('Cruises'), 'h: home renders with no cruises key in the store');
+  ok(bodyText(w2).includes('New game') && bodyText(w2).includes('New cruise'), 'h: home renders its two big actions with no cruises key in the store');
   createCruiseViaForm(w2, 'Legacy Check');
   ok(Array.isArray(state(w2).cruises) && state(w2).cruises.length === 1, 'h: cruises defaults to [] and accepts the new cruise');
   ok(state(w2).cruises[0].roster.length === 0, 'h: new cruise roster is []');
