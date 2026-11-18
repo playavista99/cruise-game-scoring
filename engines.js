@@ -670,8 +670,92 @@
     return true;
   }
 
+  /* ---------------- camera measurement (v2.2) ----------------
+     Photo measurement: the user taps the 4 corners of a known-size
+     rectangle in a photo; the homography (perspective transform)
+     between the image corners and the rectangle's real plane
+     coordinates (inches) undoes the camera angle, so any two tapped
+     points on that same plane yield a real distance. Pure math —
+     the DOM side stores points as fractions of the photo and works
+     in natural pixels here. */
+
+  // Reference rectangles the user can calibrate against, in inches
+  // (w = the edge between corner 1 and corner 2 as tapped).
+  const MEASURE_REFS = [
+    { id: 'cornhole', name: 'Cornhole board', w: 24, h: 48 },
+    { id: 'card', name: 'Credit card', w: 3.37, h: 2.125 },
+    { id: 'letter', name: 'US Letter paper', w: 8.5, h: 11 }
+  ];
+
+  // Solve an 8x8 linear system by Gaussian elimination with partial
+  // pivoting. Returns the solution vector, or null when the system
+  // is (near-)singular — e.g. collinear calibration corners.
+  function solve8(A, b) {
+    const n = 8;
+    const M = A.map(function (row, i) { return row.concat([b[i]]); });
+    for (let col = 0; col < n; col++) {
+      let piv = col;
+      for (let r = col + 1; r < n; r++) {
+        if (Math.abs(M[r][col]) > Math.abs(M[piv][col])) piv = r;
+      }
+      if (Math.abs(M[piv][col]) < 1e-12) return null;
+      if (piv !== col) { const t = M[col]; M[col] = M[piv]; M[piv] = t; }
+      for (let r = 0; r < n; r++) {
+        if (r === col) continue;
+        const f = M[r][col] / M[col][col];
+        if (f === 0) continue;
+        for (let c = col; c <= n; c++) M[r][c] -= f * M[col][c];
+      }
+    }
+    const x = new Array(n);
+    for (let i = 0; i < n; i++) x[i] = M[i][n] / M[i][i];
+    return x;
+  }
+
+  // Homography mapping image pixels -> plane inches, from 4 corner
+  // correspondences (arrays of {x, y}, same order on both sides).
+  // Returns a flat row-major 3x3 [h11..h33] with h33 = 1, or null
+  // for degenerate input (wrong count, non-finite, collinear).
+  function computeHomography(imgPts, planePts) {
+    if (!Array.isArray(imgPts) || !Array.isArray(planePts) ||
+        imgPts.length !== 4 || planePts.length !== 4) return null;
+    const A = [], b = [];
+    for (let i = 0; i < 4; i++) {
+      const p = imgPts[i], q = planePts[i];
+      if (!p || !q || !isFinite(p.x) || !isFinite(p.y) || !isFinite(q.x) || !isFinite(q.y)) return null;
+      A.push([p.x, p.y, 1, 0, 0, 0, -p.x * q.x, -p.y * q.x]); b.push(q.x);
+      A.push([0, 0, 0, p.x, p.y, 1, -p.x * q.y, -p.y * q.y]); b.push(q.y);
+    }
+    const h = solve8(A, b);
+    if (!h) return null;
+    return [h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7], 1];
+  }
+
+  // Map one image point (pixels) to plane coordinates (inches).
+  function planePoint(H, x, y) {
+    if (!H) return null;
+    const w = H[6] * x + H[7] * y + H[8];
+    if (!w || !isFinite(w)) return null;
+    return {
+      x: (H[0] * x + H[1] * y + H[2]) / w,
+      y: (H[3] * x + H[4] * y + H[5]) / w
+    };
+  }
+
+  // Real distance in inches between two image points (pixels).
+  function measureDistance(H, p1, p2) {
+    if (!H || !p1 || !p2) return null;
+    const a = planePoint(H, p1.x, p1.y);
+    const b = planePoint(H, p2.x, p2.y);
+    if (!a || !b) return null;
+    const dx = b.x - a.x, dy = b.y - a.y;
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+
   const Engines = {
     uid: uid, pairKey: pairKey, nextPow2: nextPow2,
+    MEASURE_REFS: MEASURE_REFS,
+    computeHomography: computeHomography, planePoint: planePoint, measureDistance: measureDistance,
     matchOutcome: matchOutcome, tapsTotal: tapsTotal,
     seedPositions: seedPositions,
     buildSingleElim: buildSingleElim, buildDoubleElim: buildDoubleElim,
