@@ -40,11 +40,63 @@
   if (!Array.isArray(S.templates)) S.templates = [];
   if (!Array.isArray(S.games)) S.games = [];
   if (!Array.isArray(S.setups)) S.setups = [];
+  if (!Array.isArray(S.cruises)) S.cruises = [];
   function save() { try { localStorage.setItem(LS_KEY, JSON.stringify(S)); } catch (e) { /* storage full/blocked */ } }
 
   function allTemplates() { return BUILTINS.concat(S.templates); }
   function getTemplate(id) { return allTemplates().find(function (t) { return t.id === id; }) || null; }
   function getGame(id) { return S.games.find(function (g) { return g.id === id; }) || null; }
+
+  /* ---------------- cruises (v1.8) ----------------
+     A cruise groups the games played on one sailing and carries a
+     roster: the running list of that sailing's players (name +
+     optional cabin). Games point at their cruise with game.cruiseId
+     (null/absent = standalone). Everything stays on-device, exactly
+     like games and history; no Supabase changes. */
+  function getCruise(id) {
+    if (!id) return null;
+    return S.cruises.find(function (c) { return c.id === id; }) || null;
+  }
+  function normName(s) { return String(s === null || s === undefined ? '' : s).trim().toLowerCase(); }
+  /* Roster sync: called from every entry-add path (game start, and
+     Quick Score / Round Robin / Bracket walk-ups). A game entry joins
+     its cruise's roster matched by normalized name (trimmed,
+     case-insensitive); a match that lacks a cabin gains the entry's,
+     a new name is appended. Edit-players substitutes deliberately do
+     NOT call this (one-game stand-ins), and renames never rewrite
+     the roster. */
+  function syncRosterEntry(game, entry) {
+    if (!game || !game.cruiseId || !entry) return;
+    const cruise = getCruise(game.cruiseId);
+    if (!cruise) return;
+    if (!Array.isArray(cruise.roster)) cruise.roster = [];
+    const key = normName(entry.name);
+    if (!key) return;
+    const found = cruise.roster.find(function (r) { return normName(r.name) === key; });
+    if (found) {
+      if (!found.cabin && entry.cabin) found.cabin = entry.cabin;
+    } else {
+      cruise.roster.push({ id: E.uid('p'), name: entry.name, cabin: entry.cabin || '' });
+    }
+  }
+  function syncGameRoster(game) {
+    if (!game) return;
+    game.entries.forEach(function (e) { syncRosterEntry(game, e); });
+  }
+  function fmtDay(s) {
+    if (!s) return '';
+    const d = new Date(String(s) + 'T12:00:00');
+    if (isNaN(d.getTime())) return String(s);
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  }
+  function cruiseMeta(c) {
+    const parts = [];
+    if (c.ship) parts.push(c.ship);
+    if (c.startDate && c.endDate) parts.push(fmtDay(c.startDate) + ' – ' + fmtDay(c.endDate));
+    else if (c.startDate) parts.push('From ' + fmtDay(c.startDate));
+    else if (c.endDate) parts.push('Until ' + fmtDay(c.endDate));
+    return parts.join(' · ');
+  }
   function entryName(game, id) {
     const e = game.entries.find(function (x) { return x.id === id; });
     return e ? e.name : '—';
@@ -147,6 +199,7 @@
   /* ---------------- router ---------------- */
   let screen = { name: 'home' };
   let draft = null;         // setup/sign-up in progress
+  let pendingCruiseId = null; // cruise a new-game flow was started from; consumed by startDraft
   let openScorer = null;    // {gameId, matchId, tapsA:[], tapsB:[]}
   function go(name, arg) {
     screen = { name: name, arg: arg };
@@ -160,7 +213,7 @@
     const bind = BINDS[screen.name];
     if (bind) bind(screen.arg);
   }
-  document.getElementById('brandBtn').addEventListener('click', function () { go('home'); });
+  document.getElementById('brandBtn').addEventListener('click', function () { pendingCruiseId = null; go('home'); });
   document.getElementById('accountBtn').addEventListener('click', function () { go('account'); });
 
   /* ---------------- shared fragments ---------------- */
@@ -229,12 +282,28 @@
     if (inProgress.length) {
       h += '<h2>In progress</h2>';
       inProgress.slice().reverse().forEach(function (g) {
+        const gc = getCruise(g.cruiseId);
         h += '<div class="card row"><div>' + badge(g) + '</div><div class="grow">' +
           '<div class="gamename">' + esc(displayName(g)) + '</div>' +
-          '<div class="sub">' + esc(formatLabel(g)) + ' · ' + g.entries.length + ' ' + (g.entryKind === 'teams' ? 'teams' : 'players') + ' · ' + fmtDate(g.createdAt) + '</div></div>' +
+          '<div class="sub">' + (gc ? '🛳 ' + esc(gc.name) + ' · ' : '') + esc(formatLabel(g)) + ' · ' + g.entries.length + ' ' + (g.entryKind === 'teams' ? 'teams' : 'players') + ' · ' + fmtDate(g.createdAt) + '</div></div>' +
           '<button class="btn small" data-continue="' + g.id + '">Continue</button></div>';
       });
     }
+    h += '<h2>Cruises</h2>';
+    if (S.cruises.length) {
+      S.cruises.slice().reverse().forEach(function (c) {
+        const nGames = S.games.filter(function (g) { return g.cruiseId === c.id; }).length;
+        const meta = [cruiseMeta(c), nGames + (nGames === 1 ? ' game' : ' games'),
+          (c.roster ? c.roster.length : 0) + ((c.roster && c.roster.length === 1) ? ' player' : ' players')].filter(Boolean).join(' · ');
+        h += '<div class="card row"><div class="badge" style="background:#0b6fa422;border:2px solid #0b6fa4">🛳</div><div class="grow">' +
+          '<div class="gamename">' + esc(c.name) + '</div>' +
+          '<div class="sub">' + esc(meta) + '</div></div>' +
+          '<button class="btn small" data-opencruise="' + c.id + '">Open</button></div>';
+      });
+    } else {
+      h += '<p class="note">Working a sailing? Create a cruise and every game you run on it is filed together, with its own player roster and a summary at the end.</p>';
+    }
+    h += '<button class="btn secondary block" id="newCruiseBtn">➕ New cruise</button>';
     if (S.setups.length) {
       h += '<h2>Saved setups</h2>';
       S.setups.slice().reverse().forEach(function (p) {
@@ -267,7 +336,11 @@
   }
   BINDS.home = function () {
     disarmPresetDel(); // every fresh render starts disarmed
-    document.getElementById('newGameBtn').addEventListener('click', function () { go('pick'); });
+    document.getElementById('newGameBtn').addEventListener('click', function () { pendingCruiseId = null; go('pick'); });
+    document.getElementById('newCruiseBtn').addEventListener('click', function () { openCruiseForm(); });
+    document.querySelectorAll('[data-opencruise]').forEach(function (b) {
+      b.addEventListener('click', function () { go('cruise', b.getAttribute('data-opencruise')); });
+    });
     document.getElementById('homeFeedbackBtn').addEventListener('click', function () { openFeedback(); });
     document.getElementById('historyBtn').addEventListener('click', function () { go('history'); });
     document.getElementById('templatesBtn').addEventListener('click', function () { go('templates'); });
@@ -313,9 +386,47 @@
     return 'Round Robin' + (g.rrPairing === 'results' ? ' · Results-based' : ' · Pre-set');
   }
 
+  /* ----- New cruise form ----- */
+  function openCruiseForm() {
+    openModal('<h2 style="margin-top:0">🛳 New cruise</h2>' +
+      '<p class="note">Games you start inside this cruise are filed together, its players form a roster you can pick from at sign-up, and the cruise page keeps a summary. Only the name is required.</p>' +
+      '<label class="field"><span>Cruise name</span><input type="text" id="crName" placeholder="e.g. Sky Princess — Nov 2026" maxlength="60" autocomplete="off"></label>' +
+      '<label class="field"><span>Ship (optional)</span><input type="text" id="crShip" placeholder="e.g. Sky Princess" maxlength="60" autocomplete="off"></label>' +
+      '<label class="field"><span>Start date (optional)</span><input type="date" id="crStart"></label>' +
+      '<label class="field"><span>End date (optional)</span><input type="date" id="crEnd"></label>' +
+      '<p class="note hidden" id="crHint" style="color:#b3261e;font-weight:600">The cruise needs a name first — nothing was created.</p>' +
+      '<button class="btn block" id="crCreate">Create cruise</button>' +
+      '<button class="btn ghost block" id="crCancel">Cancel</button>');
+    document.getElementById('crCancel').addEventListener('click', closeModal);
+    document.getElementById('crCreate').addEventListener('click', function () {
+      const name = document.getElementById('crName').value.trim();
+      if (!name) {
+        document.getElementById('crHint').classList.remove('hidden');
+        document.getElementById('crName').focus();
+        return;
+      }
+      const c = {
+        id: E.uid('cr'), name: name,
+        ship: document.getElementById('crShip').value.trim(),
+        startDate: document.getElementById('crStart').value,
+        endDate: document.getElementById('crEnd').value,
+        createdAt: Date.now(), roster: []
+      };
+      S.cruises.push(c);
+      save();
+      closeModal();
+      go('cruise', c.id);
+    });
+    const inp = document.getElementById('crName');
+    if (inp) inp.focus();
+  }
+
   /* ----- Pick a game ----- */
   SCREENS.pick = function () {
-    let h = '<h1>Pick a game</h1><div class="grid">';
+    const pc = getCruise(pendingCruiseId);
+    let h = '<h1>Pick a game</h1>' +
+      (pc ? '<p class="note">🛳 New game for <b>' + esc(pc.name) + '</b> — it will be saved to that cruise, and its players join the cruise roster.</p>' : '') +
+      '<div class="grid">';
     allTemplates().forEach(function (t) {
       h += '<button class="pickcard" data-pick="' + t.id + '">' + badge(t, 54) + '<span>' + esc(t.name) + '</span>' +
         (t.builtin ? '' : '<span class="sub">Custom</span>') + '</button>';
@@ -329,7 +440,11 @@
       b.addEventListener('click', function () { startDraft(b.getAttribute('data-pick')); });
     });
     document.getElementById('createBtn').addEventListener('click', function () { go('templateEditor', { id: null, thenSetup: true }); });
-    document.getElementById('backBtn').addEventListener('click', function () { go('home'); });
+    document.getElementById('backBtn').addEventListener('click', function () {
+      const cid = pendingCruiseId;
+      pendingCruiseId = null;
+      if (cid && getCruise(cid)) go('cruise', cid); else go('home');
+    });
   };
 
   function startDraft(templateId) {
@@ -344,8 +459,10 @@
       // (the bags themselves are colored), every other game OFF.
       useColors: templateId === 'builtin-beanbag',
       label: '',
+      cruiseId: pendingCruiseId || null,
       entries: []
     };
+    pendingCruiseId = null; // consumed: a later standalone draft must not inherit it
     go('setup');
   }
 
@@ -404,6 +521,7 @@
       qsPlanned: (p.qsPlanned && p.qsPlanned.length ? p.qsPlanned : ['']).slice(),
       qsPlannedParsed: null,
       useColors: !!p.useColors, label: p.label || '',
+      cruiseId: null, // presets launch standalone games
       entries: []
     };
     if (draft.format === 'quick' && draft.qsRoundsOn === 'on') {
@@ -641,6 +759,9 @@
     let h = '<h1>Set up: ' + esc(t.name) + '</h1>' +
       '<div class="card row"><div>' + badge(t) + '</div><div class="grow"><div class="gamename">' + esc(t.name) + '</div>' +
       '<div class="sub">Scoring rules below start from the template — change anything for this game only.</div></div></div>' +
+      (draft.cruiseId && getCruise(draft.cruiseId)
+        ? '<p class="note">🛳 Cruise: <b>' + esc(getCruise(draft.cruiseId).name) + '</b> — this game will be filed under that cruise, and its players join the cruise roster.</p>'
+        : '') +
       '<label class="field"><span>Game label (optional)</span>' +
       '<input type="text" id="suLabel" value="' + esc(draft.label || '') + '" placeholder="e.g. Soccer Shootout — Day 1" maxlength="60"></label>' +
       '<p class="note">A label names THIS game — “Soccer Shootout Tournament”, “Day 2 rematch” — and shows wherever the game’s name appears. Blank keeps the plain game name.</p>' +
@@ -765,11 +886,95 @@
     return 'Pre-set schedule: ' + built.matches.length + ' matches in ' + built.rounds.length + ' rounds · each entry plays ' + rangeTxt + ' games' +
       (range.min !== range.max ? ' (with an odd field × games, one entry plays one fewer — that is the honest math)' : '') + '.';
   }
+  /* Roster picker rows (sign-up inside a cruise, Individuals only):
+     each roster player is a toggle — tap to put them in this game,
+     tap again to leave them out (the no-show case). Selection is by
+     normalized name against the current sign-up list, so the rows
+     always mirror the list exactly. */
+  function rosterPickHTML() {
+    const cruise = draft && draft.cruiseId ? getCruise(draft.cruiseId) : null;
+    if (!cruise) return '';
+    if (!cruise.roster || !cruise.roster.length) {
+      return '<p class="note">Nobody is on this cruise’s roster yet — everyone who plays a game in the cruise joins it automatically, and next time they are one tap away here.</p>';
+    }
+    let h = '';
+    cruise.roster.forEach(function (r) {
+      const sel = draft.entries.some(function (e) { return normName(e.name) === normName(r.name); });
+      h += '<button type="button" class="rosterpick' + (sel ? ' on' : '') + '" data-rosterpick="' + r.id + '">' +
+        '<span class="rpcheck">' + (sel ? '✓' : '＋') + '</span>' +
+        '<span class="grow">' + esc(r.name) + (r.cabin ? ' <span class="sub">(cabin ' + esc(r.cabin) + ')</span>' : '') + '</span>' +
+        '<span class="sub">' + (sel ? 'Playing' : 'Tap to add') + '</span></button>';
+    });
+    return h;
+  }
+  function toggleRosterPick(rosterId) {
+    const cruise = draft && draft.cruiseId ? getCruise(draft.cruiseId) : null;
+    if (!cruise || !cruise.roster) return;
+    const r = cruise.roster.find(function (x) { return x.id === rosterId; });
+    if (!r) return;
+    const idx = draft.entries.findIndex(function (e) { return normName(e.name) === normName(r.name); });
+    if (idx >= 0) { draft.entries.splice(idx, 1); return; }
+    const e = { id: E.uid('e'), name: r.name, cabin: r.cabin || '' };
+    if (draft.useColors !== false) e.color = paletteAt(draft.entries.length).name;
+    draft.entries.push(e);
+  }
+  /* Copy players from another game: adds that game's entries to the
+     sign-up list (names, cabins, team members), skipping names
+     already listed — nothing is replaced, and the list stays fully
+     editable before Start. Same-cruise games are listed first. */
+  function copyPlayersFrom(src) {
+    if (!src || !draft) return;
+    src.entries.forEach(function (se) {
+      const dup = draft.entries.some(function (e) { return normName(e.name) === normName(se.name); });
+      if (dup) return;
+      const e = { id: E.uid('e'), name: se.name, cabin: se.cabin || '' };
+      if (se.members) e.members = se.members;
+      if (draft.useColors !== false) e.color = paletteAt(draft.entries.length).name;
+      draft.entries.push(e);
+    });
+  }
+  function openCopyPlayers(onDone) {
+    const inCruise = function (g) { return !!(draft && draft.cruiseId && g.cruiseId === draft.cruiseId); };
+    const games = S.games.slice().sort(function (a, b) {
+      const ca = inCruise(a) ? 0 : 1, cb = inCruise(b) ? 0 : 1;
+      if (ca !== cb) return ca - cb;
+      return b.createdAt - a.createdAt;
+    });
+    let h = '<h2 style="margin-top:0">Copy players from another game</h2>' +
+      '<p class="note">That game’s players are added to this sign-up list — nobody is removed, names already on the list are skipped, and you can still edit everything before starting.</p>';
+    if (!games.length) h += '<p class="empty">No other games on this device yet.</p>';
+    let lastGroup = null;
+    games.forEach(function (g) {
+      if (draft && draft.cruiseId) {
+        const grp = inCruise(g) ? 'This cruise' : 'Other games';
+        if (grp !== lastGroup) { h += '<h3>' + grp + '</h3>'; lastGroup = grp; }
+      }
+      h += '<button class="btn block secondary" data-copyfrom="' + g.id + '">' + esc(displayName(g)) +
+        ' <span class="sub">· ' + esc(formatLabel(g)) + ' · ' + g.entries.length + ' ' + (g.entryKind === 'teams' ? 'teams' : 'players') +
+        ' · ' + fmtDate(g.createdAt) + (g.status === 'finished' ? ' · finished' : ' · in progress') + '</span></button>';
+    });
+    h += '<button class="btn ghost block" id="copyCancel">Cancel</button>';
+    openModal(h);
+    document.getElementById('copyCancel').addEventListener('click', closeModal);
+    document.querySelectorAll('[data-copyfrom]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        copyPlayersFrom(getGame(b.getAttribute('data-copyfrom')));
+        closeModal();
+        if (onDone) onDone();
+      });
+    });
+  }
   SCREENS.signup = function () {
     const kindWord = draft.entryKind === 'teams' ? 'team' : 'player';
+    const cruise = draft.cruiseId ? getCruise(draft.cruiseId) : null;
     let h = '<h1>Sign up ' + kindWord + 's</h1>' +
+      (cruise ? '<p class="note">🛳 Cruise: <b>' + esc(cruise.name) + '</b></p>' : '') +
       '<p class="note">Name is required. Cabin is optional — it tells apart duplicate names and helps find winners later.' +
       (draft.entryKind === 'teams' ? ' Member names are optional too.' : '') + '</p>' +
+      (cruise && draft.entryKind === 'individuals'
+        ? '<h2>From this cruise’s roster</h2><div id="rosterPick">' + rosterPickHTML() + '</div>' +
+          '<p class="note">Tap a name to add them to this game; tap again to leave out a no-show. Names added below join the roster when the game starts.</p>'
+        : '') +
       '<div id="entryList">';
     draft.entries.forEach(function (e, i) {
       h += entryRowHTML(e, i);
@@ -779,6 +984,7 @@
       '<input type="text" class="cb" id="newCabin" placeholder="Cabin" inputmode="numeric">' +
       '<button class="iconbtn" id="addEntry" aria-label="Add">＋</button></div>' +
       (draft.entryKind === 'teams' ? '<input type="text" id="newMembers" placeholder="Member names (optional)" style="margin:4px 0 8px">' : '') +
+      '<button class="btn secondary block" id="copyPlayersBtn">📋 Copy players from another game…</button>' +
       '<p class="note" id="rrPreview"></p>' +
       '<div class="row wrap">' +
       (draft.format === 'bracket' ? '<button class="btn secondary" id="shuffleBtn">🔀 Shuffle seeds</button>' : '') +
@@ -854,6 +1060,18 @@
       const pv = document.getElementById('rrPreview');
       if (pv) pv.textContent = draft.format === 'rr' ? rrPreview(draft.entries.length) : '';
       document.getElementById('startBtn').disabled = draft.entries.length < 2;
+      // Roster picker (cruise sign-ups): rows mirror the entry list.
+      const rp = document.getElementById('rosterPick');
+      if (rp) {
+        rp.innerHTML = rosterPickHTML();
+        rp.querySelectorAll('[data-rosterpick]').forEach(function (b) {
+          b.addEventListener('click', function () {
+            signupEditIdx = -1;
+            toggleRosterPick(b.getAttribute('data-rosterpick'));
+            refresh();
+          });
+        });
+      }
     };
     const addFromInputs = function () {
       const nm = document.getElementById('newName');
@@ -869,6 +1087,7 @@
       nm.focus();
       refresh();
     };
+    document.getElementById('copyPlayersBtn').addEventListener('click', function () { openCopyPlayers(refresh); });
     document.getElementById('addEntry').addEventListener('click', addFromInputs);
     document.getElementById('newName').addEventListener('keydown', function (ev) { if (ev.key === 'Enter') addFromInputs(); });
     document.getElementById('newCabin').addEventListener('keydown', function (ev) { if (ev.key === 'Enter') addFromInputs(); });
@@ -895,6 +1114,7 @@
       def: clone(draft.def), format: draft.format, entryKind: draft.entryKind,
       scoreMode: draft.scoreMode, elim: draft.elim,
       useColors: !!draft.useColors, label: (draft.label || '').trim(),
+      cruiseId: draft.cruiseId || null,
       entries: clone(draft.entries), matches: [], playoffMatches: null, playoffField: null,
       status: 'playing', winnerId: null, createdAt: Date.now(), finishedAt: null
     };
@@ -945,6 +1165,7 @@
       }
     }
     S.games.push(game);
+    syncGameRoster(game); // game start: everyone playing joins the cruise roster
     save();
     draft = null;
     go('play', game.id);
@@ -1175,9 +1396,11 @@
   SCREENS.play = function (gameId) {
     const game = getGame(gameId);
     if (!game) return '<p class="empty">Game not found.</p>';
+    const playCruise = getCruise(game.cruiseId);
     let h = '<div class="card row"><div>' + badge(game) + '</div><div class="grow">' +
       '<div class="gamename">' + esc(displayName(game)) + '</div><div class="sub">' +
-      (game.label && String(game.label).trim() ? esc(game.name) + ' · ' : '') + esc(formatLabel(game)) + ' · ' +
+      (game.label && String(game.label).trim() ? esc(game.name) + ' · ' : '') +
+      (playCruise ? '🛳 ' + esc(playCruise.name) + ' · ' : '') + esc(formatLabel(game)) + ' · ' +
       (game.scoreMode === 'tap' ? 'Tap-by-tap scoring' : 'Final-total scoring') + '</div></div>' +
       '<button class="btn small secondary" id="editPlayersBtn">👥 Edit players</button>' +
       '<button class="btn small secondary" id="gameSettingsBtn">⚙ Game settings</button></div>';
@@ -1305,6 +1528,7 @@
       const e = { id: E.uid('e'), name: nm.value.trim(), cabin: document.getElementById('walkCabin').value.trim(), taps: [], total: null };
       if (colorsOn(game)) e.color = paletteAt(game.entries.length).name;
       game.entries.push(e);
+      syncRosterEntry(game, e); // walk-ups join the cruise roster too
       save(); render();
     });
   }
@@ -1741,6 +1965,7 @@
       };
       if (colorsOn(game)) walkEntry.color = paletteAt(game.entries.length).name;
       game.entries.push(walkEntry);
+      syncRosterEntry(game, walkEntry); // walk-ups join the cruise roster too
       if (game.rrPairing === 'preset') {
         const sum = regeneratePresetRR(game);
         game.rrNote = (wasComplete
@@ -2068,6 +2293,7 @@
       };
       if (colorsOn(game)) walkEntry.color = paletteAt(game.entries.length).name;
       game.entries.push(walkEntry);
+      syncRosterEntry(game, walkEntry); // walk-ups join the cruise roster too
       const ids = game.entries.map(function (e) { return e.id; });
       game.matches = game.elim === 'double' ? E.buildDoubleElim(ids) : E.buildSingleElim(ids);
       E.resolveBracket(game.def, game.matches);
@@ -2465,6 +2691,7 @@
       id: E.uid('g'), templateId: old.templateId, name: old.name, icon: old.icon, color: old.color,
       def: clone(old.def), format: old.format, entryKind: old.entryKind, scoreMode: old.scoreMode,
       elim: old.elim, useColors: old.useColors !== false, label: old.label || '',
+      cruiseId: old.cruiseId || null,
       entries: old.entries.map(function (e, i) {
         const ne = { id: e.id, name: e.name, cabin: e.cabin, members: e.members, taps: [], total: null };
         if (old.useColors !== false) ne.color = colorByName(e.color || '') ? e.color : paletteAt(i).name;
@@ -2500,7 +2727,9 @@
         game.rrRoundsGenerated = built.rounds.length;
       }
     }
-    S.games.push(game); save();
+    S.games.push(game);
+    syncGameRoster(game); // same players: roster matches are no-ops
+    save();
     go('play', game.id);
   }
 
@@ -2556,6 +2785,224 @@
       });
     });
     document.getElementById('backBtn').addEventListener('click', function () { go('home'); });
+  };
+
+  /* ----- Cruise page (v1.8) -----
+     One sailing's home: a summary (games played, distinct players,
+     wins per player), its games (in-progress resume, finished open
+     the usual history detail), a "new game in this cruise" launch,
+     and the roster. The roster is this cruise's player list: game
+     entries sync into it automatically (see syncRosterEntry), and it
+     can also be managed by hand here — add, edit, remove. Removing a
+     roster player never touches games already played. Deleting the
+     cruise deletes only the cruise and its roster: its games become
+     standalone, never deleted. Both destructive actions use the
+     two-step in-app confirm pattern (no native confirm()). */
+  let rosterEditId = null; // roster entry being edited on the cruise page
+  let rosterDelArmId = null, rosterDelArmTimer = null;
+  function disarmRosterDel() {
+    rosterDelArmId = null;
+    if (rosterDelArmTimer) { clearTimeout(rosterDelArmTimer); rosterDelArmTimer = null; }
+    document.querySelectorAll('[data-rosterdel]').forEach(function (x) {
+      x.textContent = 'Remove'; x.classList.remove('confirming');
+    });
+  }
+  let cruiseDelArmId = null, cruiseDelArmTimer = null;
+  function disarmCruiseDel() {
+    cruiseDelArmId = null;
+    if (cruiseDelArmTimer) { clearTimeout(cruiseDelArmTimer); cruiseDelArmTimer = null; }
+    document.querySelectorAll('[data-delcruise]').forEach(function (x) {
+      x.textContent = 'Delete cruise'; x.classList.remove('confirming');
+    });
+  }
+  function cruiseSummary(cruise) {
+    const finished = S.games.filter(function (g) { return g.cruiseId === cruise.id && g.status === 'finished'; });
+    const players = {}; // normalized name -> display name (first seen)
+    const wins = {};    // normalized name -> {name, count}
+    finished.forEach(function (g) {
+      g.entries.forEach(function (e) {
+        const k = normName(e.name);
+        if (k && !players[k]) players[k] = e.name;
+      });
+      const wIds = (g.winnerIds && g.winnerIds.length) ? g.winnerIds : (g.winnerId ? [g.winnerId] : []);
+      wIds.forEach(function (id) {
+        const e = g.entries.find(function (x) { return x.id === id; });
+        if (!e) return;
+        const k = normName(e.name);
+        if (!k) return;
+        if (!wins[k]) wins[k] = { name: e.name, count: 0 };
+        wins[k].count++;
+      });
+    });
+    const winRows = Object.keys(wins).map(function (k) { return wins[k]; })
+      .sort(function (a, b) { return (b.count - a.count) || a.name.localeCompare(b.name); });
+    return { gamesPlayed: finished.length, playerCount: Object.keys(players).length, winRows: winRows };
+  }
+  SCREENS.cruise = function (cruiseId) {
+    const c = getCruise(cruiseId);
+    if (!c) {
+      return '<p class="empty">Cruise not found.</p>' +
+        '<button class="btn ghost block" id="cruiseBackBtn">Back</button>';
+    }
+    if (!Array.isArray(c.roster)) c.roster = [];
+    const meta = cruiseMeta(c);
+    let h = '<h1>🛳 ' + esc(c.name) + '</h1>' +
+      (meta ? '<p class="note" style="margin-top:-6px">' + esc(meta) + '</p>' : '');
+    const sum = cruiseSummary(c);
+    h += '<div class="card"><div class="row spread"><span>Games played</span><b>' + sum.gamesPlayed + '</b></div>' +
+      '<div class="row spread" style="margin-top:6px"><span>Players</span><b>' + sum.playerCount + '</b></div>';
+    if (sum.winRows.length) {
+      h += '<h3 style="margin-bottom:2px">Wins</h3><table class="stand">';
+      sum.winRows.forEach(function (r) {
+        h += '<tr><td>' + esc(r.name) + '</td><td class="num">' + r.count + (r.count === 1 ? ' win' : ' wins') + '</td></tr>';
+      });
+      h += '</table>';
+    } else {
+      h += '<p class="note" style="margin-bottom:0">No finished games yet — wins will tally up here as games are completed.</p>';
+    }
+    h += '</div>';
+    h += '<button class="btn block" id="cruiseNewGameBtn" style="min-height:60px">➕ New game in this cruise</button>';
+    const inProg = S.games.filter(function (g) { return g.cruiseId === c.id && g.status === 'playing'; }).slice().reverse();
+    const finished = S.games.filter(function (g) { return g.cruiseId === c.id && g.status === 'finished'; }).slice().reverse();
+    h += '<h2>Games in this cruise</h2>';
+    if (!inProg.length && !finished.length) {
+      h += '<p class="empty">No games yet — start the first one above.</p>';
+    }
+    inProg.forEach(function (g) {
+      h += '<div class="card row"><div>' + badge(g) + '</div><div class="grow">' +
+        '<div class="gamename">' + esc(displayName(g)) + '</div>' +
+        '<div class="sub">' + esc(formatLabel(g)) + ' · ' + g.entries.length + ' ' + (g.entryKind === 'teams' ? 'teams' : 'players') + ' · ' + fmtDate(g.createdAt) + ' · in progress</div></div>' +
+        '<button class="btn small" data-cruisecontinue="' + g.id + '">Continue</button></div>';
+    });
+    finished.forEach(function (g) {
+      h += '<div class="card row"><div>' + badge(g) + '</div><div class="grow">' +
+        '<div class="gamename">' + esc(displayName(g)) + '</div>' +
+        '<div class="sub">' + esc(formatLabel(g)) + ' · ' + fmtDate(g.finishedAt || g.createdAt) + ' · 🏆 ' + (g.winnerId ? nameWithDotHTML(g, g.winnerId) : '—') + '</div></div>' +
+        '<button class="btn small" data-cruiseview="' + g.id + '">View</button></div>';
+    });
+    h += '<h2>Roster (' + c.roster.length + ')</h2>';
+    c.roster.forEach(function (r) {
+      if (rosterEditId === r.id) {
+        h += '<div class="card" style="margin:6px 0;padding:12px">' +
+          '<label class="field" style="margin-top:0"><span>Name</span><input type="text" id="rosterEditName" value="' + esc(r.name) + '" autocomplete="off"></label>' +
+          '<label class="field"><span>Cabin (optional)</span><input type="text" id="rosterEditCabin" value="' + esc(r.cabin || '') + '" inputmode="numeric"></label>' +
+          '<p class="note hidden" id="rosterEditHint" style="color:#b3261e;font-weight:600">Name can’t be empty — nothing was changed.</p>' +
+          '<div class="row wrap"><button class="btn small" id="rosterEditSave">Save</button>' +
+          '<button class="btn small ghost" id="rosterEditCancel">Cancel</button></div></div>';
+      } else {
+        h += '<div class="card row" style="margin:6px 0;padding:10px 12px"><div class="grow">' +
+          '<span class="gamename" style="font-size:16px">' + esc(r.name) + '</span>' +
+          (r.cabin ? '<span class="tag">Cabin ' + esc(r.cabin) + '</span>' : '') + '</div>' +
+          '<button class="btn small secondary" data-rosteredit="' + r.id + '">Edit</button>' +
+          '<button class="btn small danger" data-rosterdel="' + r.id + '">Remove</button></div>';
+      }
+    });
+    h += '<div class="entryrow"><input type="text" class="nm" id="rosterName" placeholder="Player name" autocomplete="off">' +
+      '<input type="text" class="cb" id="rosterCabin" placeholder="Cabin" inputmode="numeric">' +
+      '<button class="iconbtn" id="rosterAdd" aria-label="Add to roster">＋</button></div>' +
+      '<p class="note">Everyone who plays a game in this cruise joins the roster automatically. Removing someone here never changes games already played.</p>' +
+      '<hr class="divider">' +
+      '<button class="btn danger block" data-delcruise="' + c.id + '">Delete cruise</button>' +
+      '<p class="note" style="text-align:center">Deleting a cruise removes it and its roster — its games stay, as standalone games.</p>' +
+      '<button class="btn ghost block" id="cruiseBackBtn">Back</button>';
+    return h;
+  };
+  BINDS.cruise = function (cruiseId) {
+    disarmRosterDel(); // every fresh render starts disarmed
+    disarmCruiseDel();
+    const back = document.getElementById('cruiseBackBtn');
+    if (back) back.addEventListener('click', function () { rosterEditId = null; go('home'); });
+    const c = getCruise(cruiseId);
+    if (!c) return;
+    if (!Array.isArray(c.roster)) c.roster = [];
+    document.getElementById('cruiseNewGameBtn').addEventListener('click', function () {
+      rosterEditId = null;
+      pendingCruiseId = c.id;
+      go('pick');
+    });
+    document.querySelectorAll('[data-cruisecontinue]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        const g = getGame(b.getAttribute('data-cruisecontinue'));
+        if (g && qsActive(g) && g.qsRounds.betweenRounds) go('roundSummary', g.id);
+        else go('play', b.getAttribute('data-cruisecontinue'));
+      });
+    });
+    document.querySelectorAll('[data-cruiseview]').forEach(function (b) {
+      b.addEventListener('click', function () { go('finish', b.getAttribute('data-cruiseview')); });
+    });
+    const addRoster = function () {
+      const nm = document.getElementById('rosterName');
+      const name = nm.value.trim();
+      if (!name) { nm.focus(); return; }
+      const cabin = document.getElementById('rosterCabin').value.trim();
+      const found = c.roster.find(function (r) { return normName(r.name) === normName(name); });
+      if (found) { if (!found.cabin && cabin) found.cabin = cabin; }
+      else c.roster.push({ id: E.uid('p'), name: name, cabin: cabin });
+      save(); render();
+    };
+    document.getElementById('rosterAdd').addEventListener('click', addRoster);
+    document.getElementById('rosterName').addEventListener('keydown', function (ev) { if (ev.key === 'Enter') addRoster(); });
+    document.getElementById('rosterCabin').addEventListener('keydown', function (ev) { if (ev.key === 'Enter') addRoster(); });
+    document.querySelectorAll('[data-rosteredit]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        rosterEditId = b.getAttribute('data-rosteredit');
+        render();
+        const inp = document.getElementById('rosterEditName');
+        if (inp) { inp.focus(); if (inp.select) inp.select(); }
+      });
+    });
+    const es = document.getElementById('rosterEditSave');
+    if (es) es.addEventListener('click', function () {
+      const r = c.roster.find(function (x) { return x.id === rosterEditId; });
+      if (!r) { rosterEditId = null; render(); return; }
+      const name = document.getElementById('rosterEditName').value.trim();
+      if (!name) {
+        document.getElementById('rosterEditHint').classList.remove('hidden');
+        document.getElementById('rosterEditName').focus();
+        return;
+      }
+      r.name = name;
+      r.cabin = document.getElementById('rosterEditCabin').value.trim();
+      rosterEditId = null;
+      save(); render();
+    });
+    const ec = document.getElementById('rosterEditCancel');
+    if (ec) ec.addEventListener('click', function () { rosterEditId = null; render(); });
+    document.querySelectorAll('[data-rosterdel]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        const id = b.getAttribute('data-rosterdel');
+        if (rosterDelArmId === id) {
+          disarmRosterDel();
+          c.roster = c.roster.filter(function (x) { return x.id !== id; });
+          if (rosterEditId === id) rosterEditId = null;
+          save(); render();
+          return;
+        }
+        disarmRosterDel();
+        rosterDelArmId = id;
+        b.textContent = 'Confirm remove?';
+        b.classList.add('confirming');
+        rosterDelArmTimer = setTimeout(disarmRosterDel, 4000);
+      });
+    });
+    document.querySelectorAll('[data-delcruise]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        const id = b.getAttribute('data-delcruise');
+        if (cruiseDelArmId === id) {
+          disarmCruiseDel();
+          S.games.forEach(function (g) { if (g.cruiseId === id) g.cruiseId = null; });
+          S.cruises = S.cruises.filter(function (x) { return x.id !== id; });
+          rosterEditId = null;
+          save(); go('home');
+          return;
+        }
+        disarmCruiseDel();
+        cruiseDelArmId = id;
+        b.textContent = 'Confirm delete cruise?';
+        b.classList.add('confirming');
+        cruiseDelArmTimer = setTimeout(disarmCruiseDel, 4000);
+      });
+    });
   };
 
   /* ----- Account (optional, Supabase — templates only) ----- */
