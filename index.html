@@ -12,20 +12,24 @@
 </head>
 <body>
 <header class="topbar">
-  <button class="brand" id="brandBtn" aria-label="Home">
-    <span class="brand-icon">🏆</span><span class="brand-name">Game Scoring</span>
-  </button>
+  <div class="topzone topzone-left" aria-hidden="true"></div>
+  <div class="topzone topzone-center">
+    <button class="brand" id="brandBtn" aria-label="Home">
+      <span class="brand-icon">🏆</span><span class="brand-name">Game Scoring</span>
+    </button>
+  </div>
   <div class="topbtns">
     <button class="topbtn" id="accountBtn">Account</button>
     <button class="topbtn" id="menuBtn" aria-label="Menu" aria-haspopup="true" aria-expanded="false">☰</button>
   </div>
   <nav class="menupanel hidden" id="menuPanel" aria-label="App menu">
+    <button class="menuitem" id="menuHomeBtn" type="button"><span class="menuitem-ic" aria-hidden="true">🏠</span><span>Home</span></button>
     <button class="menuitem" id="menuInstallBtn" type="button"><span class="menuitem-ic" aria-hidden="true">📲</span><span>Install this app</span></button>
     <button class="menuitem" id="menuShareBtn" type="button"><span class="menuitem-ic" aria-hidden="true">🔗</span><span>Share / QR code</span></button>
     <a class="menuitem hidden" id="menuWhatsappBtn" href="#" target="_blank" rel="noopener"><span class="menuitem-ic" aria-hidden="true">💬</span><span>Join the WhatsApp group</span></a>
     <button class="menuitem" id="menuFeedbackBtn" type="button"><span class="menuitem-ic" aria-hidden="true">✉️</span><span>Send feedback</span></button>
     <div class="menuversion" id="menuVersionSection">
-      <div id="menuVersionText">Version 2.0.1</div>
+      <div id="menuVersionText">Version 2.1</div>
       <div class="menuversion-status" id="updateStatus" role="status" aria-live="polite"></div>
       <button class="menuversion-btn" id="checkUpdatesBtn" type="button">Check for updates</button>
       <button class="menuversion-btn update hidden" id="updateNowBtn" type="button">⬆ Update now</button>
