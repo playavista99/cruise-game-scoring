@@ -40,7 +40,7 @@ function boot() {
   w.alert = () => {};
   w.scrollTo = () => {};
   w.Element.prototype.scrollIntoView = () => {};
-  w.fetch = () => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ version: '2.1' }) });
+  w.fetch = () => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ version: '2.1.1' }) });
   scripts.forEach((s) => w.eval(s));
   W = w;
   return w;
