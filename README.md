@@ -28,6 +28,20 @@ there is no fixed round count. Finishing crowns the best running total
 a round-by-round breakdown, and Play Again keeps the rounds setup.
 Games saved before rounds existed load as classic Quick Score.
 
+**Mid-game walk-ups:** players can join after a game has started.
+Quick Score always allowed walk-ups; brackets accept them only while
+no match has been scored (the bracket is rebuilt with the newcomer as
+last seed). In a **pre-set round robin**, adding a player regenerates
+the remaining schedule: scored matches are kept exactly as they are,
+unscored pairings are rebuilt so everyone still gets their full game
+count — and if the round robin was already complete, the newcomer is
+rotated in against players who each get one extra game so they can
+play. A **↻ Regenerate remaining schedule** button does the same
+rebuild on demand (two-tap confirm). In a **results-based round
+robin**, a walk-up joins the pool immediately (their standings row
+says "Joins next round") and is paired when staff pair the next
+round. Adds close once a playoff bracket has started.
+
 **Entry colors:** every player or team in every game gets a color
 (Red, Blue, Green, Yellow, Orange, Purple, Black, White), assigned
 automatically in sign-up order — so Bean Bag Toss starts Red vs Blue —
@@ -61,6 +75,7 @@ bottom of the home page. Feedback is written to the Supabase
 | `sw.js`, `manifest.webmanifest`, `icon.svg` | Offline shell / installable PWA bits |
 | `supabase/schema.sql` | One-time database setup for the optional account |
 | `tests/engines.test.mjs` | Engine verification: `node tests/engines.test.mjs` |
+| `tests/quick-rounds.test.mjs`, `tests/rr-adds.test.mjs` | End-to-end DOM tests (jsdom) driving the shipped app: `node tests/quick-rounds.test.mjs`, `node tests/rr-adds.test.mjs` |
 
 ## Hosting (GitHub Pages)
 
