@@ -146,7 +146,15 @@ the browser's localStorage on the device. Nothing about players or
 games leaves the device. An optional staff account (Supabase Auth)
 syncs *custom templates only* across a staffer's devices.
 
-**☰ Menu (top right):** *Install this app* (PWA install prompt, or
+**Navigation:** the header title is centered, and the ☰ menu's
+first item is *Home*. Every screen except Home itself carries one
+shared nav row at the top — *← Back* on the left where a meaningful
+previous screen exists, *🏠 Home* on the right — so no screen is a
+dead end; the play and round-summary screens offer Home only (their
+games stay in progress), and the finish screen keeps its own
+*Play again* / *Home* buttons.
+
+**☰ Menu (top right):** *Home* · *Install this app* (PWA install prompt, or
 Add-to-Home-Screen instructions) · *Share / QR code* (a QR code for
 this site's URL, generated on-device by `qr.js` — nothing is fetched —
 plus Share / Copy link) · *Join the WhatsApp group* (only shown when
@@ -174,7 +182,7 @@ check right now.
 | `sw.js`, `manifest.webmanifest`, `icon.svg` | Offline shell / installable PWA bits |
 | `supabase/schema.sql` | One-time database setup for the optional account |
 | `tests/engines.test.mjs` | Engine verification: `node tests/engines.test.mjs` |
-| `tests/quick-rounds.test.mjs`, `tests/rr-adds.test.mjs`, `tests/edit-players.test.mjs`, `tests/playoff-field.test.mjs`, `tests/winner-flow.test.mjs`, `tests/setup-features.test.mjs`, `tests/cruises.test.mjs`, `tests/update-check.test.mjs`, `tests/home-flow.test.mjs`, `tests/signup-hint.test.mjs` | End-to-end DOM tests (jsdom) driving the shipped app: `node tests/<name>.test.mjs` |
+| `tests/quick-rounds.test.mjs`, `tests/rr-adds.test.mjs`, `tests/edit-players.test.mjs`, `tests/playoff-field.test.mjs`, `tests/winner-flow.test.mjs`, `tests/setup-features.test.mjs`, `tests/cruises.test.mjs`, `tests/update-check.test.mjs`, `tests/home-flow.test.mjs`, `tests/signup-hint.test.mjs`, `tests/nav.test.mjs` | End-to-end DOM tests (jsdom) driving the shipped app: `node tests/<name>.test.mjs` |
 
 ## Release checklist
 
