@@ -110,7 +110,8 @@ sync would need a new table and is out of scope.
 **Cruises:** the home screen's *Cruises* section files a whole
 sailing's games together. *➕ New cruise* asks for a name (ship and
 start/end dates are optional); opening a cruise shows its page: a
-**summary card** (games played, distinct players, and a wins tally
+**summary card** (games played, the whole roster counted as
+players, and a wins tally
 per player — joint winners each count), its in-progress and finished
 games, and a **roster** — the cruise's own player list. Anyone who
 plays a game in the cruise joins the roster automatically (matched
