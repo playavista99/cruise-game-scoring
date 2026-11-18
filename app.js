@@ -86,7 +86,7 @@
   function entryDotHTML(game, id) { return colorDotHTML(entryColorById(game, id)); }
   // Dot + escaped name — drop-in for HTML spots that used esc(entryName(...)).
   function nameWithDotHTML(game, id) { return entryDotHTML(game, id) + esc(entryName(game, id)); }
-  function showColorPicker(currentName, onPick) {
+  function showColorPicker(currentName, onPick, onCancel) {
     let h = '<h2 style="margin-top:0">Choose a color</h2><div class="palettegrid">';
     ENTRY_COLORS.forEach(function (c) {
       h += '<button class="palettebtn' + (c.name === currentName ? ' on' : '') + '" data-pickcolor="' + c.name + '">' +
@@ -97,7 +97,10 @@
     document.querySelectorAll('[data-pickcolor]').forEach(function (b) {
       b.addEventListener('click', function () { closeModal(); onPick(b.getAttribute('data-pickcolor')); });
     });
-    document.getElementById('cpCancel').addEventListener('click', closeModal);
+    document.getElementById('cpCancel').addEventListener('click', function () {
+      closeModal();
+      if (onCancel) onCancel();
+    });
   }
   function clone(o) { return JSON.parse(JSON.stringify(o)); }
 
@@ -606,26 +609,58 @@
       '<button class="btn ghost block" id="signupBack">Back to setup</button>';
     return h;
   };
+  let signupEditIdx = -1; // sign-up row whose name is being edited inline (-1 = none)
   function entryRowHTML(e, i) {
     const c = entryColor(draft.entries, e);
+    const editing = signupEditIdx === i;
     return '<div class="card row" style="margin:6px 0;padding:10px 12px">' +
       '<button class="colorswatch" data-colorpick="' + i + '" style="background:' + c.hex + '" aria-label="Color: ' + c.name + '. Tap to change"></button>' +
       '<div class="grow">' +
-      '<span class="gamename" style="font-size:16px">' + (i + 1) + '. ' + esc(e.name) + '</span>' +
+      (editing
+        ? '<input type="text" class="nameedit" data-nameinput="' + i + '" value="' + esc(e.name) + '" autocomplete="off" aria-label="Edit name">'
+        : '<span class="gamename" style="font-size:16px">' + (i + 1) + '. <span data-nameedit="' + i + '">' + esc(e.name) + '</span></span>' +
+          '<button class="editbtn" data-nameedit="' + i + '" aria-label="Edit name">✎</button>') +
       '<span class="tag">' + c.name + '</span>' +
       (e.cabin ? '<span class="tag">Cabin ' + esc(e.cabin) + '</span>' : '') +
       (e.members ? '<div class="sub">' + esc(e.members) + '</div>' : '') +
       '</div><button class="iconbtn" data-delentry="' + i + '" aria-label="Remove">✕</button></div>';
   }
   BINDS.signup = function () {
+    signupEditIdx = -1;
     const refresh = function () {
       document.getElementById('entryList').innerHTML = draft.entries.map(entryRowHTML).join('');
       document.querySelectorAll('[data-delentry]').forEach(function (b) {
         b.addEventListener('click', function () {
+          signupEditIdx = -1;
           draft.entries.splice(parseInt(b.getAttribute('data-delentry'), 10), 1);
           refresh();
         });
       });
+      document.querySelectorAll('[data-nameedit]').forEach(function (b) {
+        b.addEventListener('click', function () {
+          signupEditIdx = parseInt(b.getAttribute('data-nameedit'), 10);
+          refresh();
+          const inp = document.querySelector('[data-nameinput]');
+          if (inp) { inp.focus(); if (inp.select) inp.select(); }
+        });
+      });
+      const nameInp = document.querySelector('[data-nameinput]');
+      if (nameInp) {
+        let done = false;
+        const commit = function (saveIt) {
+          if (done) return; done = true;
+          const idx = parseInt(nameInp.getAttribute('data-nameinput'), 10);
+          const v = nameInp.value.trim();
+          if (saveIt && v && draft.entries[idx]) draft.entries[idx].name = v;
+          signupEditIdx = -1;
+          refresh();
+        };
+        nameInp.addEventListener('keydown', function (ev) {
+          if (ev.key === 'Enter') { ev.preventDefault(); commit(true); }
+          else if (ev.key === 'Escape') commit(false);
+        });
+        nameInp.addEventListener('blur', function () { commit(true); });
+      }
       document.querySelectorAll('[data-colorpick]').forEach(function (b) {
         b.addEventListener('click', function () {
           const entry = draft.entries[parseInt(b.getAttribute('data-colorpick'), 10)];
@@ -958,6 +993,7 @@
     let h = '<div class="card row"><div>' + badge(game) + '</div><div class="grow">' +
       '<div class="gamename">' + esc(game.name) + '</div><div class="sub">' + esc(formatLabel(game)) + ' · ' +
       (game.scoreMode === 'tap' ? 'Tap-by-tap scoring' : 'Final-total scoring') + '</div></div>' +
+      '<button class="btn small secondary" id="editPlayersBtn">👥 Edit players</button>' +
       '<button class="btn small secondary" id="gameSettingsBtn">⚙ Game settings</button></div>';
     if (game.format === 'quick') h += quickPlayHTML(game);
     else if (game.format === 'bracket') h += bracketPlayHTML(game, game.matches, 'brk') + bracketAddHTML(game);
@@ -973,6 +1009,7 @@
     const game = getGame(gameId);
     if (!game) return;
     document.getElementById('gameSettingsBtn').addEventListener('click', function () { showGameSettings(game); });
+    document.getElementById('editPlayersBtn').addEventListener('click', function () { showEditPlayers(game); });
     document.getElementById('homeBtn').addEventListener('click', function () { go('home'); });
     document.getElementById('deleteGameBtn').addEventListener('click', function () {
       if (!confirm('Delete this game and its scores?')) return;
@@ -1625,6 +1662,182 @@
     });
   }
 
+  /* ----- Edit players (rename / substitute / swap) -----
+     Opened from the play screen in every format. Everything in the
+     app reads names, cabins and colors live from game.entries, and
+     matches/scores reference entry IDs — so editing an entry's fields
+     updates every screen at once; a substitute who takes over an
+     entry's ID inherits its scores and matches exactly; and swapping
+     two entries' identity fields (name, cabin, members, color) trades
+     the two people between slots while scores stay with the slots.
+     Substitutions and swaps are logged on game.subLog and shown on
+     the finish screen (which is also the history detail) and in the
+     shared results text. Per-row Save buttons: saving one row never
+     clobbers edits in progress in another row. */
+  function subCtx(game) {
+    if (game.format === 'quick' && game.qsRounds) return 'Round ' + game.qsRounds.current;
+    return '';
+  }
+  function logSub(game, rec) {
+    game.subLog = game.subLog || [];
+    rec.at = new Date().toISOString();
+    const ctx = subCtx(game);
+    if (ctx) rec.ctx = ctx;
+    game.subLog.push(rec);
+  }
+  function subLogHTML(game) {
+    const log = game.subLog || [];
+    if (!log.length) return '';
+    let h = '<div class="card"><h3 style="margin-top:0">Substitutions &amp; swaps</h3>';
+    log.forEach(function (r) {
+      if (r.type === 'swap') h += '<p style="margin:4px 0">🔀 Swapped: ' + esc(r.aName) + ' ⇄ ' + esc(r.bName) + (r.ctx ? ' <span class="sub">(' + esc(r.ctx) + ')</span>' : '') + '</p>';
+      else h += '<p style="margin:4px 0">👥 ' + esc(r.newName) + ' replaced ' + esc(r.oldName) + (r.ctx ? ' <span class="sub">(' + esc(r.ctx) + ')</span>' : '') + '</p>';
+    });
+    return h + '</div>';
+  }
+  function subLogText(game) {
+    const subs = [], swaps = [];
+    (game.subLog || []).forEach(function (r) {
+      if (r.type === 'swap') swaps.push(r.aName + ' ⇄ ' + r.bName);
+      else subs.push(r.newName + ' for ' + r.oldName);
+    });
+    let t = '';
+    if (subs.length) t += 'Subs: ' + subs.join(', ') + '\n';
+    if (swaps.length) t += 'Swaps: ' + swaps.join(', ') + '\n';
+    return t;
+  }
+
+  let epSubId = null, epSwapId = null; // entry ids in substitute / swap mode inside the modal
+  function epRowHTML(game, e) {
+    const c = entryColor(game.entries, e);
+    const kind = game.entryKind === 'teams' ? 'team' : 'player';
+    if (epSubId === e.id) {
+      return '<div class="card eprow">' +
+        '<div class="gamename">' + colorDotHTML(c) + 'Substitute for ' + esc(e.name) + '</div>' +
+        '<p class="note">The substitute takes over this ' + kind + '’s scores, matches and color.</p>' +
+        '<input type="text" id="epSubName" placeholder="Substitute name" autocomplete="off" style="margin:6px 0">' +
+        '<input type="text" id="epSubCabin" placeholder="Cabin (optional)" inputmode="numeric" style="margin:6px 0">' +
+        (game.entryKind === 'teams' ? '<input type="text" id="epSubMembers" placeholder="Member names (optional)" style="margin:6px 0">' : '') +
+        '<p class="note ephint hidden" id="epSubHint">The substitute needs a name — nothing was changed.</p>' +
+        '<div class="row wrap"><button class="btn small" id="epSubConfirm">Confirm substitute</button>' +
+        '<button class="btn small ghost" id="epSubCancel">Cancel</button></div></div>';
+    }
+    if (epSwapId === e.id) {
+      const others = game.entries.filter(function (x) { return x.id !== e.id; });
+      return '<div class="card eprow">' +
+        '<div class="gamename">' + colorDotHTML(c) + 'Swap ' + esc(e.name) + ' with…</div>' +
+        '<p class="note">The two ' + kind + 's trade names, cabins' + (game.entryKind === 'teams' ? ', members' : '') + ' and colors. Scores and matches stay with the slots.</p>' +
+        '<select id="epSwapSel">' + others.map(function (o) {
+          return '<option value="' + o.id + '">' + esc(o.name) + '</option>';
+        }).join('') + '</select>' +
+        '<div class="row wrap" style="margin-top:8px"><button class="btn small" id="epSwapConfirm">Confirm swap?</button>' +
+        '<button class="btn small ghost" id="epSwapCancel">Cancel</button></div></div>';
+    }
+    return '<div class="card eprow">' +
+      '<div class="row"><button class="colorswatch" data-epcolor="' + e.id + '" style="background:' + c.hex + '" aria-label="Color: ' + c.name + '. Tap to change"></button>' +
+      '<div class="grow"><input type="text" data-epname="' + e.id + '" value="' + esc(e.name) + '" autocomplete="off" aria-label="Name"></div></div>' +
+      '<div class="entryrow" style="margin-top:8px"><input type="text" class="cb" data-epcabin="' + e.id + '" placeholder="Cabin" inputmode="numeric" value="' + esc(e.cabin || '') + '">' +
+      (game.entryKind === 'teams' ? '<input type="text" data-epmembers="' + e.id + '" placeholder="Member names" value="' + esc(e.members || '') + '">' : '') +
+      '<button class="btn small" data-epsave="' + e.id + '">Save</button></div>' +
+      '<p class="note ephint hidden" data-ephint="' + e.id + '">Name can’t be empty — the old name was kept.</p>' +
+      '<div class="row wrap" style="margin-top:4px">' +
+      '<button class="btn small secondary" data-epsub="' + e.id + '">Replace with substitute…</button>' +
+      (game.entries.length > 1 ? '<button class="btn small secondary" data-epswap="' + e.id + '">Swap identities with…</button>' : '') +
+      '</div></div>';
+  }
+  function showEditPlayers(game) {
+    epSubId = null; epSwapId = null;
+    const kind = game.entryKind === 'teams' ? 'team' : 'player';
+    openModal('<h2 style="margin-top:0">👥 Edit players — ' + esc(game.name) + '</h2>' +
+      '<p class="note">Fix a name or cabin, change a color, replace a ' + kind + ' with a substitute, or swap two ' + kind + 's’ places. Scores and matches stay with each slot.</p>' +
+      '<div id="epList"></div>' +
+      '<button class="btn block" id="epDone">Done</button>');
+    document.getElementById('epDone').addEventListener('click', function () { closeModal(); render(); });
+    renderEpList(game);
+  }
+  function renderEpList(game) {
+    const wrap = document.getElementById('epList');
+    if (!wrap) return;
+    wrap.innerHTML = game.entries.map(function (e) { return epRowHTML(game, e); }).join('');
+    wrap.querySelectorAll('[data-epsave]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        const e = game.entries.find(function (x) { return x.id === b.getAttribute('data-epsave'); });
+        if (!e) return;
+        const nameInp = wrap.querySelector('[data-epname="' + e.id + '"]');
+        const hint = wrap.querySelector('[data-ephint="' + e.id + '"]');
+        const name = nameInp.value.trim();
+        if (!name) { hint.classList.remove('hidden'); nameInp.value = e.name; nameInp.focus(); return; }
+        hint.classList.add('hidden');
+        e.name = name;
+        e.cabin = wrap.querySelector('[data-epcabin="' + e.id + '"]').value.trim();
+        const mem = wrap.querySelector('[data-epmembers="' + e.id + '"]');
+        if (mem) e.members = mem.value.trim();
+        save(); render();
+      });
+    });
+    wrap.querySelectorAll('[data-epcolor]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        const e = game.entries.find(function (x) { return x.id === b.getAttribute('data-epcolor'); });
+        if (!e) return;
+        showColorPicker(entryColor(game.entries, e).name, function (colorName) {
+          e.color = colorName;
+          save(); render();
+          showEditPlayers(game);
+        }, function () { showEditPlayers(game); });
+      });
+    });
+    wrap.querySelectorAll('[data-epsub]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        epSubId = b.getAttribute('data-epsub'); epSwapId = null;
+        renderEpList(game);
+        const inp = document.getElementById('epSubName');
+        if (inp) inp.focus();
+      });
+    });
+    wrap.querySelectorAll('[data-epswap]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        epSwapId = b.getAttribute('data-epswap'); epSubId = null;
+        renderEpList(game);
+      });
+    });
+    const subConfirm = document.getElementById('epSubConfirm');
+    if (subConfirm) subConfirm.addEventListener('click', function () {
+      const e = game.entries.find(function (x) { return x.id === epSubId; });
+      if (!e) { epSubId = null; renderEpList(game); return; }
+      const nameInp = document.getElementById('epSubName');
+      const name = nameInp.value.trim();
+      if (!name) { document.getElementById('epSubHint').classList.remove('hidden'); nameInp.focus(); return; }
+      const oldName = e.name;
+      e.name = name;
+      e.cabin = document.getElementById('epSubCabin').value.trim();
+      const mem = document.getElementById('epSubMembers');
+      if (mem) e.members = mem.value.trim();
+      logSub(game, { type: 'sub', oldName: oldName, newName: name });
+      epSubId = null;
+      save(); render();
+      renderEpList(game);
+    });
+    const subCancel = document.getElementById('epSubCancel');
+    if (subCancel) subCancel.addEventListener('click', function () { epSubId = null; renderEpList(game); });
+    const swapConfirm = document.getElementById('epSwapConfirm');
+    if (swapConfirm) swapConfirm.addEventListener('click', function () {
+      const a = game.entries.find(function (x) { return x.id === epSwapId; });
+      const sel = document.getElementById('epSwapSel');
+      const b = sel ? game.entries.find(function (x) { return x.id === sel.value; }) : null;
+      if (!a || !b || a === b) { epSwapId = null; renderEpList(game); return; }
+      const aName = a.name, bName = b.name;
+      const ca = entryColor(game.entries, a).name, cb = entryColor(game.entries, b).name;
+      ['name', 'cabin', 'members'].forEach(function (k) { const t = a[k]; a[k] = b[k]; b[k] = t; });
+      a.color = cb; b.color = ca;
+      logSub(game, { type: 'swap', aName: aName, bName: bName });
+      epSwapId = null;
+      save(); render();
+      renderEpList(game);
+    });
+    const swapCancel = document.getElementById('epSwapCancel');
+    if (swapCancel) swapCancel.addEventListener('click', function () { epSwapId = null; renderEpList(game); });
+  }
+
   /* ----- Modal ----- */
   function openModal(html) {
     modalRoot.innerHTML = '<div class="modalwrap" id="modalWrap"><div class="modal">' + html + '</div></div>';
@@ -1679,6 +1892,7 @@
     if (game.format === 'rr' && game.playoffMatches && game.winnerId) txt += 'Playoff champion: ' + winnerTxt + '\n';
     txt += '\nResults:\n';
     rows.forEach(function (r, i) { txt += (i + 1) + '. ' + r.name + (r.color ? ' (' + r.color + ')' : '') + (r.cabin ? ' (cabin ' + r.cabin + ')' : '') + (r.line ? ' — ' + r.line : '') + '\n'; });
+    txt += subLogText(game);
     return txt;
   }
   function download(filename, blob) {
@@ -1795,6 +2009,7 @@
     });
     h += '</table></div>';
     if (qsActive(game)) h += qsBreakdownHTML(game);
+    h += subLogHTML(game);
     h += shareButtonsHTML(game) +
       '<button class="btn block" id="againBtn" style="margin-top:14px">↻ Play again (same players)</button>' +
       '<button class="btn ghost block" id="finishHomeBtn">Home</button>';
