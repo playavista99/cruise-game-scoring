@@ -83,7 +83,7 @@ ok(!appHTML(w).includes('cruisebanner') && !bodyText(w).includes('This game will
   'a: no cruise banner on the standalone pick screen');
 const gridStandalone = $('.grid').innerHTML;
 ok(gridStandalone.includes('Create new game'), 'a: pick list includes the make-your-own entry');
-click($('#backBtn'), 'back from pick');
+click($('#navBackBtn'), 'back from pick (nav row)');
 ok(!!$('#newGameBtn'), 'a: Back from a standalone pick returns Home');
 
 /* ============ (b) with a cruise, New game asks where it belongs ============ */
@@ -101,9 +101,9 @@ click($('#destStandalone'), 'choose standalone');
 ok(bodyText(w).includes('Pick a game'), 'b: standalone choice continues to the pick screen');
 ok(!appHTML(w).includes('cruisebanner'), 'b: standalone pick screen has no banner');
 ok($('.grid').innerHTML === gridStandalone, 'e: pick list identical after choosing Standalone');
-click($('#backBtn'), 'back from pick');
+click($('#navBackBtn'), 'back from pick (nav row)');
 ok(bodyText(w).includes("Where's this game?"), 'b: Back from the pick screen returns to the chooser');
-click($('#destBack'), 'back from chooser');
+click($('#navBackBtn'), 'back from chooser (nav row)');
 ok(!!$('#newGameBtn') && bodyText(w).includes('Your cruises'), 'b: Back from the chooser returns Home');
 
 /* ============ (c) chooser → cruise → banner + game carries cruiseId ============ */
