@@ -12,7 +12,7 @@
      line in index.html, the <meta name="app-version"> tag in
      index.html, and the service-worker cache name are bumped
      alongside it on every release — see the README release checklist. */
-  const APP_VERSION = '2.3';
+  const APP_VERSION = '2.3.1';
   const UPDATE_FLAG_KEY = 'cgsa-just-updated';
   function parseVersion(v) {
     return String(v === null || v === undefined ? '' : v).trim().replace(/^v/i, '').split('.').map(function (part) {
@@ -3631,16 +3631,17 @@
       if (game) shareStatus[game.id] = { ok: false, at: Date.now() };
       return Promise.resolve(false);
     }
+    const code = game.share.code;
     const nowMs = Date.now();
     const body = {
-      code: game.share.code,
+      code: code,
       payload: buildPlayerView(game),
       updated_at: new Date(nowMs).toISOString(),
       expires_at: new Date(nowMs + 24 * 60 * 60 * 1000).toISOString()
     };
     return fetch(cfg.SUPABASE_URL + '/rest/v1/shared_views', {
       method: 'POST',
-      headers: sbRestHeaders({ Prefer: 'resolution=merge-duplicates,return=minimal' }),
+      headers: sbRestHeaders({ Prefer: 'resolution=merge-duplicates,return=minimal', 'x-view-code': code }),
       body: JSON.stringify(body)
     }).then(function (res) {
       const okPush = !!(res && res.ok);
@@ -3669,7 +3670,7 @@
     if (!cfg.SUPABASE_URL || !cfg.SUPABASE_ANON_KEY || typeof fetch !== 'function') return Promise.resolve(false);
     return fetch(cfg.SUPABASE_URL + '/rest/v1/shared_views?code=eq.' + encodeURIComponent(code), {
       method: 'DELETE',
-      headers: sbRestHeaders({ Prefer: 'return=minimal' })
+      headers: sbRestHeaders({ Prefer: 'return=minimal', 'x-view-code': code })
     }).then(function (res) { return !!(res && res.ok); }).catch(function () { return false; });
   }
 
