@@ -4,9 +4,13 @@
  * history live on this device only.
  *
  * To enable the OPTIONAL staff account (cloud sync of custom templates
- * only — never games, players, cabins or history), create a Supabase
- * project (see supabase/schema.sql and the README), then paste the
- * project URL and the public anon key here.
+ * only), create a Supabase project (see supabase/schema.sql and the
+ * README), then paste the project URL and the public anon key here.
+ * The same project also serves feedback and the live player view
+ * (v2.3): when staff share a game, a first-names-only snapshot is
+ * published for players — never cabins, never full names of
+ * individuals, never team member names. Games otherwise never leave
+ * the device.
  */
 window.APP_CONFIG = {
   SUPABASE_URL: 'https://zwvtupimuzlvghwikvqr.supabase.co',
