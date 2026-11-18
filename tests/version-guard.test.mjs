@@ -1,4 +1,4 @@
-/* End-to-end DOM tests for v2.1.1's guard, fixtures rolled to v2.1.2: the self-healing version guard.
+/* End-to-end DOM tests for v2.1.1's guard, fixtures rolled to v2.2: the self-healing version guard.
    A phone that loads the app mid-deploy can cache a MIXED shell
    (new index.html + old app.js or the reverse), leaving rendered
    buttons dead. index.html carries <meta name="app-version"> as the
@@ -6,7 +6,7 @@
    the cgsa-shell caches and reloads — at most once per session per
    version-pair (sessionStorage flag).
    a. meta == APP_VERSION: no deletion, no reload, no flag.
-   b. meta "2.1" vs APP_VERSION "2.1.2": shell caches deleted,
+   b. meta "2.1" vs APP_VERSION "2.2": shell caches deleted,
       exactly one reload, heal flag set.
    c. Second boot, flag already set, meta still mismatched:
       no reload, no deletion (no loop).
@@ -20,7 +20,7 @@ catch (e) { ({ JSDOM } = createRequire('/tmp/qsr-test/package.json')('jsdom')); 
 
 const DIR = new URL('..', import.meta.url).pathname;
 const htmlReal = readFileSync(DIR + 'index.html', 'utf8');
-const htmlOldMeta = htmlReal.replace('content="2.1.2"', 'content="2.1"');
+const htmlOldMeta = htmlReal.replace('content="2.2"', 'content="2.1"');
 const htmlNoMeta = htmlReal.replace(/<meta name="app-version"[^>]*>\n/, '');
 const scripts = ['config.js', 'engines.js', 'qr.js', 'app.js'].map((f) => readFileSync(DIR + f, 'utf8'));
 
@@ -40,7 +40,7 @@ function boot(html, opts) {
   w.alert = () => {};
   w.scrollTo = () => {};
   w.Element.prototype.scrollIntoView = () => {};
-  w.fetch = () => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ version: '2.1.2' }) });
+  w.fetch = () => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ version: '2.2' }) });
   w.__reloadCalls = 0;
   w.__cgsaReload = () => { w.__reloadCalls++; };
   w.__deletedCaches = [];
@@ -62,11 +62,11 @@ ok(htmlNoMeta !== htmlReal && htmlNoMeta.indexOf('app-version') === -1, 'fixture
 
 /* ============ (a) matching meta: nothing happens ============ */
 {
-  const w = boot(htmlReal, { cacheKeys: ['cgsa-shell-v20', 'someone-elses-cache'] });
+  const w = boot(htmlReal, { cacheKeys: ['cgsa-shell-v21', 'someone-elses-cache'] });
   await tick(60);
   const meta = w.document.querySelector('meta[name="app-version"]');
-  ok(meta && meta.getAttribute('content') === '2.1.2', 'a: shipped index.html carries meta 2.1.2');
-  ok(w.CruiseGameScoring.APP_VERSION === '2.1.2', 'a: APP_VERSION is 2.1.2');
+  ok(meta && meta.getAttribute('content') === '2.2', 'a: shipped index.html carries meta 2.2');
+  ok(w.CruiseGameScoring.APP_VERSION === '2.2', 'a: APP_VERSION is 2.2');
   ok(w.__reloadCalls === 0, 'a: no reload when meta matches');
   ok(w.__deletedCaches.length === 0, 'a: no cache deletion when meta matches');
   ok(healKeys(w).length === 0, 'a: no heal flag written when meta matches');
@@ -74,21 +74,21 @@ ok(htmlNoMeta !== htmlReal && htmlNoMeta.indexOf('app-version') === -1, 'fixture
 
 /* ============ (b) stale meta: heal once ============ */
 {
-  const w = boot(htmlOldMeta, { cacheKeys: ['cgsa-shell-v19', 'cgsa-shell-v20', 'someone-elses-cache'] });
+  const w = boot(htmlOldMeta, { cacheKeys: ['cgsa-shell-v20', 'cgsa-shell-v21', 'someone-elses-cache'] });
   await tick(60);
-  ok(w.__deletedCaches.join(',') === 'cgsa-shell-v19,cgsa-shell-v20',
+  ok(w.__deletedCaches.join(',') === 'cgsa-shell-v20,cgsa-shell-v21',
     'b: only cgsa-shell caches deleted, got: ' + w.__deletedCaches.join(','));
   ok(w.__reloadCalls === 1, 'b: exactly one reload, got: ' + w.__reloadCalls);
-  ok(w.sessionStorage.getItem('cgs-heal-2.1|2.1.2') === '1', 'b: heal flag set for the version pair');
-  ok(w.document.getElementById('menuVersionText').textContent === 'Version 2.1.2',
+  ok(w.sessionStorage.getItem('cgs-heal-2.1|2.2') === '1', 'b: heal flag set for the version pair');
+  ok(w.document.getElementById('menuVersionText').textContent === 'Version 2.2',
     'b: app still rendered before healing (guard runs after first render)');
 }
 
 /* ============ (c) flag already set: no second heal, no loop ============ */
 {
   const w = boot(htmlOldMeta, {
-    cacheKeys: ['cgsa-shell-v19', 'cgsa-shell-v20'],
-    healFlag: 'cgs-heal-2.1|2.1.2'
+    cacheKeys: ['cgsa-shell-v20', 'cgsa-shell-v21'],
+    healFlag: 'cgs-heal-2.1|2.2'
   });
   await tick(60);
   ok(w.__reloadCalls === 0, 'c: no reload when the pair already healed this session');
@@ -97,11 +97,11 @@ ok(htmlNoMeta !== htmlReal && htmlNoMeta.indexOf('app-version') === -1, 'fixture
 
 /* ============ (d) meta absent: treated as mismatch, heals once ============ */
 {
-  const w = boot(htmlNoMeta, { cacheKeys: ['cgsa-shell-v20'] });
+  const w = boot(htmlNoMeta, { cacheKeys: ['cgsa-shell-v21'] });
   await tick(60);
-  ok(w.__deletedCaches.join(',') === 'cgsa-shell-v20', 'd: shell cache deleted when meta is absent');
+  ok(w.__deletedCaches.join(',') === 'cgsa-shell-v21', 'd: shell cache deleted when meta is absent');
   ok(w.__reloadCalls === 1, 'd: exactly one reload when meta is absent');
-  ok(w.sessionStorage.getItem('cgs-heal-|2.1.2') === '1', 'd: heal flag set for the absent-meta pair');
+  ok(w.sessionStorage.getItem('cgs-heal-|2.2') === '1', 'd: heal flag set for the absent-meta pair');
 }
 
 console.log('\n' + checks + ' checks, ' + failures + ' failures');
