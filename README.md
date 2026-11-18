@@ -42,6 +42,18 @@ robin**, a walk-up joins the pool immediately (their standings row
 says "Joins next round") and is paired when staff pair the next
 round. Adds close once a playoff bracket has started.
 
+**Editing players:** the **👥 Edit players** button on the play
+screen (every format) opens an editor for the current game: fix a
+name or cabin (handy for sign-up typos — the sign-up list itself also
+edits names inline via the ✎ on each row), change a player's color,
+**replace a player with a substitute** — the substitute takes over
+that player's scores, matches and color, so a mid-game dropout costs
+nothing — or **swap two players' identities**, trading their names,
+cabins and colors while scores stay with the slots. Substitutions
+and swaps are recorded on the finish screen, in history, and in the
+shared results text ("Subs: Maria for John"). Finished games in
+history are a record and can't be edited.
+
 **Entry colors:** every player or team in every game gets a color
 (Red, Blue, Green, Yellow, Orange, Purple, Black, White), assigned
 automatically in sign-up order — so Bean Bag Toss starts Red vs Blue —
@@ -75,7 +87,7 @@ bottom of the home page. Feedback is written to the Supabase
 | `sw.js`, `manifest.webmanifest`, `icon.svg` | Offline shell / installable PWA bits |
 | `supabase/schema.sql` | One-time database setup for the optional account |
 | `tests/engines.test.mjs` | Engine verification: `node tests/engines.test.mjs` |
-| `tests/quick-rounds.test.mjs`, `tests/rr-adds.test.mjs` | End-to-end DOM tests (jsdom) driving the shipped app: `node tests/quick-rounds.test.mjs`, `node tests/rr-adds.test.mjs` |
+| `tests/quick-rounds.test.mjs`, `tests/rr-adds.test.mjs`, `tests/edit-players.test.mjs` | End-to-end DOM tests (jsdom) driving the shipped app: `node tests/quick-rounds.test.mjs`, `node tests/rr-adds.test.mjs`, `node tests/edit-players.test.mjs` |
 
 ## Hosting (GitHub Pages)
 
