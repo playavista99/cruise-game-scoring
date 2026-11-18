@@ -198,6 +198,10 @@ function gamesFor(game, id) {
   game = scoreMatch(w, mIds[1], 3, 2);
   ok($('#startPlayoffBtn'), 'e: playoff button offered');
   click($('#startPlayoffBtn'), 'start playoff');
+  // v1.6: Start playoff opens the field-review screen first; the
+  // bracket exists once staff generate it there.
+  ok($('#pfGenerateBtn'), 'e: field screen shown before the bracket is built');
+  click($('#pfGenerateBtn'), 'generate bracket');
   game = lastGame(w);
   ok(!!game.playoffMatches, 'e: playoff bracket exists');
   ok(bodyText(w).includes('once the playoff has started'), 'e: blocked-add note shown');
