@@ -12,7 +12,7 @@
      line in index.html, the <meta name="app-version"> tag in
      index.html, and the service-worker cache name are bumped
      alongside it on every release — see the README release checklist. */
-  const APP_VERSION = '2.1.1';
+  const APP_VERSION = '2.1.2';
   const UPDATE_FLAG_KEY = 'cgsa-just-updated';
   function parseVersion(v) {
     return String(v === null || v === undefined ? '' : v).trim().replace(/^v/i, '').split('.').map(function (part) {
@@ -358,7 +358,8 @@
         h += '<div class="card row"><div>' + badge(g) + '</div><div class="grow">' +
           '<div class="gamename">' + esc(displayName(g)) + '</div>' +
           '<div class="sub">' + (gc ? '🛳 ' + esc(gc.name) + ' · ' : '') + esc(formatLabel(g)) + ' · ' + g.entries.length + ' ' + (g.entryKind === 'teams' ? 'teams' : 'players') + ' · ' + fmtDate(g.createdAt) + '</div></div>' +
-          '<button class="btn small" data-continue="' + g.id + '">Continue</button></div>';
+          '<button class="btn small" data-continue="' + g.id + '">Continue</button>' +
+          '<button class="btn small danger" data-delgame="' + g.id + '">Delete</button></div>';
       });
     }
     if (S.setups.length) {
@@ -391,8 +392,45 @@
       x.textContent = 'Delete'; x.classList.remove('confirming');
     });
   }
+  // In-progress game delete (v2.1.2): the same two-step in-app
+  // confirm, shared by the home "In progress" list and a cruise
+  // page's game list (both render [data-delgame] buttons). Deleting
+  // removes only that game — a cruise's roster and all finished
+  // games are untouched.
+  let gameDelArmId = null, gameDelArmTimer = null;
+  function disarmGameDel() {
+    gameDelArmId = null;
+    if (gameDelArmTimer) { clearTimeout(gameDelArmTimer); gameDelArmTimer = null; }
+    document.querySelectorAll('[data-delgame]').forEach(function (x) {
+      x.textContent = 'Delete'; x.classList.remove('confirming');
+    });
+  }
+  function bindGameDeletes() {
+    document.querySelectorAll('[data-delgame]').forEach(function (b) {
+      b.addEventListener('click', function (ev) {
+        // Never let a delete tap fall through to the card's
+        // resume control.
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        const id = b.getAttribute('data-delgame');
+        if (gameDelArmId === id) {
+          // Second tap on the armed button: really delete.
+          disarmGameDel();
+          S.games = S.games.filter(function (x) { return x.id !== id; });
+          save(); render();
+          return;
+        }
+        // First tap: arm this button only.
+        disarmGameDel();
+        gameDelArmId = id;
+        b.textContent = 'Confirm delete?';
+        b.classList.add('confirming');
+        gameDelArmTimer = setTimeout(disarmGameDel, 4000);
+      });
+    });
+  }
   BINDS.home = function () {
     disarmPresetDel(); // every fresh render starts disarmed
+    disarmGameDel();
     document.getElementById('newGameBtn').addEventListener('click', function () {
       // With cruises on file, ask where the game belongs first; with
       // none, go straight to the pick screen exactly as before (v2.0).
@@ -415,6 +453,7 @@
         else go('play', b.getAttribute('data-continue'));
       });
     });
+    bindGameDeletes();
     document.querySelectorAll('[data-startpreset]').forEach(function (b) {
       b.addEventListener('click', function () {
         const p = S.setups.find(function (x) { return x.id === b.getAttribute('data-startpreset'); });
@@ -2980,7 +3019,8 @@
       h += '<div class="card row"><div>' + badge(g) + '</div><div class="grow">' +
         '<div class="gamename">' + esc(displayName(g)) + '</div>' +
         '<div class="sub">' + esc(formatLabel(g)) + ' · ' + g.entries.length + ' ' + (g.entryKind === 'teams' ? 'teams' : 'players') + ' · ' + fmtDate(g.createdAt) + ' · in progress</div></div>' +
-        '<button class="btn small" data-cruisecontinue="' + g.id + '">Continue</button></div>';
+        '<button class="btn small" data-cruisecontinue="' + g.id + '">Continue</button>' +
+        '<button class="btn small danger" data-delgame="' + g.id + '">Delete</button></div>';
     });
     finished.forEach(function (g) {
       h += '<div class="card row"><div>' + badge(g) + '</div><div class="grow">' +
@@ -3017,6 +3057,7 @@
   BINDS.cruise = function (cruiseId) {
     disarmRosterDel(); // every fresh render starts disarmed
     disarmCruiseDel();
+    disarmGameDel();
     bindNavRow(function () { rosterEditId = null; go('home'); });
     const c = getCruise(cruiseId);
     if (!c) return;
@@ -3034,6 +3075,7 @@
         else go('play', b.getAttribute('data-cruisecontinue'));
       });
     });
+    bindGameDeletes();
     document.querySelectorAll('[data-cruiseview]').forEach(function (b) {
       b.addEventListener('click', function () { go('finish', b.getAttribute('data-cruiseview')); });
     });
