@@ -12,7 +12,7 @@
      line in index.html, the <meta name="app-version"> tag in
      index.html, and the service-worker cache name are bumped
      alongside it on every release — see the README release checklist. */
-  const APP_VERSION = '2.4.6';
+  const APP_VERSION = '2.4.7';
   const UPDATE_FLAG_KEY = 'cgsa-just-updated';
   const UPDATE_TARGET_KEY = 'cgsa-update-target';
   const UPDATE_CONFIRMED_KEY = 'cgsa-update-confirmed';
@@ -2408,18 +2408,29 @@
     let vs, scoreTxt = '';
     if (m.autoBye) {
       vs = nameWithDotHTML(game, m.winnerId) + ' <span class="tag">bye</span>';
+    } else if (m.winnerOnly && m.winnerId) {
+      // Winner-only result (v2.4.7): the winner's name is emphasized
+      // and NO numbers are shown — there is no score.
+      let aHTML = sideNameHTML(game, matches, m, 'a'), bHTML = sideNameHTML(game, matches, m, 'b');
+      if (m.winnerId === m.aId) aHTML = '<b>' + aHTML + '</b>';
+      else if (m.winnerId === m.bId) bHTML = '<b>' + bHTML + '</b>';
+      vs = aHTML + ' <span class="sub">vs</span> ' + bHTML;
     } else {
       vs = sideNameHTML(game, matches, m, 'a') + ' <span class="sub">vs</span> ' + sideNameHTML(game, matches, m, 'b');
     }
-    if (m.scored && !m.autoBye) scoreTxt = '<span class="score">' + m.sa + ' – ' + m.sb + '</span>';
+    if (m.scored && !m.autoBye && !m.winnerOnly) scoreTxt = '<span class="score">' + m.sa + ' – ' + m.sb + '</span>';
     let winnerTag = '';
-    if (m.scored && m.winnerId && !m.autoBye) winnerTag = '<span class="tag win">✓ ' + nameWithDotHTML(game, m.winnerId) + '</span>';
+    if (m.scored && m.winnerId && !m.autoBye) {
+      winnerTag = m.winnerOnly
+        ? '<span class="tag win">✓ ' + nameWithDotHTML(game, m.winnerId) + ' won</span> <span class="tag">no score</span>'
+        : '<span class="tag win">✓ ' + nameWithDotHTML(game, m.winnerId) + '</span>';
+    }
     const canScore = !m.autoBye && m.aId && m.bId;
     let h = '<div class="match"><div class="row spread"><div class="grow"><span class="sub">' + matchLabel(game, matches, m) + '</span> ' +
       '<span class="vs">' + vs + '</span>' + winnerTag + '</div>' + scoreTxt + '</div>';
     if (canScore) {
       h += '<button class="btn small ' + (m.scored ? 'secondary' : '') + '" data-score="' + m.id + '" style="margin-top:8px">' +
-        (isOpen ? 'Close' : (m.scored ? 'Edit score' : 'Score')) + '</button>';
+        (isOpen ? 'Close' : (m.scored ? (m.winnerOnly ? 'Edit result' : 'Edit score') : 'Score')) + '</button>';
     }
     if (isOpen) h += scorerHTML(game, m);
     h += '</div>';
@@ -2428,6 +2439,12 @@
   function scorerHTML(game, m) {
     const def = game.def;
     let h = '<div class="scorer" id="scorerBox">';
+    if (m.winnerOnly && m.winnerId) {
+      // Reopening a winner-only match (v2.4.7): say who won, plainly.
+      h += '<div class="card" style="margin:0 0 10px;padding:10px 12px;border-left:7px solid #16a34a">' +
+        '<b>🏆 Winner: ' + nameWithDotHTML(game, m.winnerId) + '</b> <span class="sub">— no score recorded</span>' +
+        '<div class="sub" style="margin-top:4px">Pick the other player below to change the winner, or enter a score and Save to switch to a scored result.</div></div>';
+    }
     if (game.scoreMode === 'total') {
       h += '<div class="sidebox"><div class="who">' + nameWithDotHTML(game, m.aId) + '</div>' +
         '<input type="text" inputmode="numeric" id="scA" value="' + (m.sa === null ? '' : m.sa) + '" placeholder="Final total"></div>' +
@@ -2449,7 +2466,17 @@
           '</div>';
       });
     }
-    h += '<button class="btn block" id="scSave">Save score</button></div>';
+    h += '<button class="btn block" id="scSave">Save score</button>';
+    // Winner-only results (v2.4.7): any bracket / RR match can be
+    // decided with no score at all. (This scorer only ever renders
+    // for matches — Quick Score has none, so it never sees this.)
+    h += '<hr class="divider"><div class="sub" style="margin:2px 0 8px">Or just pick the winner:</div><div class="row wrap">' +
+      [m.aId, m.bId].map(function (eid) {
+        const armed = openScorer && openScorer.winArmId === eid;
+        return '<button class="btn secondary grow" data-mwin="' + eid + '">' +
+          (armed ? 'Replace the score with a win for ' + nameWithDotHTML(game, eid) + '? Tap again'
+                 : '🏆 ' + nameWithDotHTML(game, eid) + ' won') + '</button>';
+      }).join('') + '</div></div>';
     return h;
   }
   function updateScorerDOM(game) {
@@ -2478,13 +2505,30 @@
       b.addEventListener('click', function () {
         const parts = b.getAttribute('data-mtap').split(':');
         const arr = parts[0] === 'a' ? openScorer.tapsA : openScorer.tapsB;
-        if (arr.length < game.def.attempts) { arr.push(parseInt(parts[1], 10)); updateScorerDOM(game); }
+        if (arr.length < game.def.attempts) { arr.push(parseInt(parts[1], 10)); openScorer.winArmId = null; updateScorerDOM(game); }
       });
     });
     document.querySelectorAll('[data-mundo]').forEach(function (b) {
       b.addEventListener('click', function () {
         const arr = b.getAttribute('data-mundo') === 'a' ? openScorer.tapsA : openScorer.tapsB;
-        arr.pop(); updateScorerDOM(game);
+        arr.pop(); openScorer.winArmId = null; updateScorerDOM(game);
+      });
+    });
+    document.querySelectorAll('[data-mwin]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        const m = findMatch(game, openScorer.matchId);
+        if (!m) { openScorer = null; render(); return; }
+        const wid = b.getAttribute('data-mwin');
+        if (m.winnerOnly && m.winnerId === wid) { openScorer = null; render(); return; } // already the result
+        if (m.scored && !m.winnerOnly && openScorer.winArmId !== wid) {
+          // Replacing a recorded SCORE with a winner-only result
+          // discards the numbers — two-step in-app confirm (the
+          // v1.3.1 pattern), never a native confirm().
+          openScorer.winArmId = wid;
+          updateScorerDOM(game);
+          return;
+        }
+        commitMatchWinner(game, m, wid);
       });
     });
     const sv = document.getElementById('scSave');
@@ -2510,12 +2554,26 @@
     const isBracketMatch = m.kind === 'brk';
     if (isBracketMatch) {
       if (sa === sb) { alert('A bracket match cannot end in a tie — one more round or a tiebreak, then enter the final score.'); return; }
-      m.sa = sa; m.sb = sb; m.scored = true;
+      m.sa = sa; m.sb = sb; m.scored = true; m.winnerOnly = false; // a real score replaces any winner-only result
       const inPlayoff = game.playoffMatches && game.playoffMatches.indexOf(m) >= 0;
       E.resolveBracket(game.def, inPlayoff ? game.playoffMatches : game.matches);
     } else {
       E.scoreRRMatch(game, game.def, m.id, sa, sb);
       game.rrNote = null; // a schedule note has done its job once play moves on
+    }
+    openScorer = null;
+    save(); render();
+  }
+  // Winner-only result (v2.4.7): decide the match with no score.
+  // Works for bracket matches (standalone or an RR playoff) and RR
+  // matches alike; the engines route advancement / standings.
+  function commitMatchWinner(game, m, winnerId) {
+    if (m.kind === 'brk') {
+      const inPlayoff = game.playoffMatches && game.playoffMatches.indexOf(m) >= 0;
+      E.pickBracketWinner(game.def, inPlayoff ? game.playoffMatches : game.matches, m.id, winnerId);
+    } else {
+      E.pickRRWinner(game, m.id, winnerId);
+      game.rrNote = null;
     }
     openScorer = null;
     save(); render();
@@ -2529,7 +2587,8 @@
         openScorer = {
           gameId: game.id, matchId: mid,
           tapsA: m && m.tapsA ? m.tapsA.slice() : [],
-          tapsB: m && m.tapsB ? m.tapsB.slice() : []
+          tapsB: m && m.tapsB ? m.tapsB.slice() : [],
+          winArmId: null // two-step arm for replacing a score with a winner-only result
         };
         render();
         const box = document.getElementById('scorerBox');
@@ -2982,7 +3041,7 @@
         fresh.push({
           id: E.uid('m'), kind: 'rr', stage: 'rr', round: rn,
           aId: pr[0], bId: pr[1], sa: null, sb: null, tapsA: [], tapsB: [],
-          scored: false, autoBye: false, winnerId: null, loserId: null
+          scored: false, autoBye: false, winnerOnly: false, winnerId: null, loserId: null
         });
       });
       if (r.bye) byeByRound[rn] = r.bye;
@@ -3283,6 +3342,27 @@
     rest.forEach(function (e) { out.push({ id: e.id, name: e.name, cabin: e.cabin, color: entryColorNameInGame(game, e), line: '' }); });
     return out;
   }
+  /* One plain-text line per decided match, for the shared results
+     and the history (finish) screen: "Anna 21 – 15 Ben" for a scored
+     match, "Anna def. Ben" for a winner-only result (v2.4.7). Byes
+     and undecided matches are not results and are skipped. */
+  function matchResultLines(game, matches) {
+    const out = [];
+    (matches || []).forEach(function (m) {
+      if (!m.scored || m.autoBye || !m.aId || !m.bId) return;
+      const nm = function (id) {
+        const e = game.entries.find(function (x) { return x.id === id; });
+        if (!e) return '—';
+        const c = entryColorNameInGame(game, e);
+        return e.name + (c ? ' (' + c + ')' : '');
+      };
+      if (m.winnerOnly && m.winnerId) out.push(nm(m.winnerId) + ' def. ' + nm(m.loserId));
+      else if (m.sa !== null && m.sa !== undefined && m.sb !== null && m.sb !== undefined) {
+        out.push(nm(m.aId) + ' ' + m.sa + ' – ' + m.sb + ' ' + nm(m.bId));
+      }
+    });
+    return out;
+  }
   function resultsText(game) {
     const rows = finalStandings(game);
     const winner = game.winnerId ? entryName(game, game.winnerId) : (rows.length ? rows[0].name : '—');
@@ -3299,6 +3379,14 @@
     if (game.format === 'rr' && game.playoffMatches && game.winnerId) txt += 'Playoff champion: ' + winnerTxt + '\n';
     txt += '\nResults:\n';
     rows.forEach(function (r, i) { txt += (i + 1) + '. ' + r.name + (r.color ? ' (' + r.color + ')' : '') + (r.cabin ? ' (cabin ' + r.cabin + ')' : '') + (r.line ? ' — ' + r.line : '') + '\n'; });
+    if (game.format === 'bracket' || game.format === 'rr') {
+      const mLines = matchResultLines(game, game.matches);
+      if (game.playoffMatches) matchResultLines(game, game.playoffMatches).forEach(function (l) { mLines.push(l); });
+      if (mLines.length) {
+        txt += '\nMatches:\n';
+        mLines.forEach(function (l) { txt += l + '\n'; });
+      }
+    }
     txt += subLogText(game);
     if (txt.slice(-1) !== '\n') txt += '\n';
     txt += '— All Ashore Game Scoring · allashore.app\n';
@@ -3425,7 +3513,11 @@
     return {
       aName: viewSideName(game, matches, m, 'a'),
       bName: viewSideName(game, matches, m, 'b'),
-      scoreText: (m.scored && !m.autoBye) ? (m.sa + ' – ' + m.sb) : '',
+      // Winner-only matches (v2.4.7) publish as "Anna def. Ben" —
+      // never a score line (there is none; sa/sb are null).
+      scoreText: (m.winnerOnly && m.winnerId)
+        ? (viewNameById(game, m.winnerId) + ' def. ' + viewNameById(game, m.loserId))
+        : ((m.scored && !m.autoBye) ? (m.sa + ' – ' + m.sb) : ''),
       status: m.autoBye ? 'Bye' : (m.scored ? 'Final' : '')
     };
   }
@@ -3849,6 +3941,15 @@
     });
     h += '</table></div>';
     if (qsActive(game)) h += qsBreakdownHTML(game);
+    if (game.format === 'bracket' || game.format === 'rr') {
+      const mLines = matchResultLines(game, game.matches)
+        .concat(game.playoffMatches ? matchResultLines(game, game.playoffMatches) : []);
+      if (mLines.length) {
+        h += '<h2>Match results</h2><div class="card">' + mLines.map(function (l) {
+          return '<div class="sub" style="padding:2px 0">' + esc(l) + '</div>';
+        }).join('') + '</div>';
+      }
+    }
     h += subLogHTML(game);
     h += shareButtonsHTML(game) +
       '<button class="btn secondary block" id="playerViewBtn" style="margin-top:10px">👥 Player view</button>' +
