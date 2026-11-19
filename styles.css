@@ -175,6 +175,20 @@ table.stand tr.outrow td { opacity: 0.55; }
 [data-nameedit] { cursor: pointer; }
 input.nameedit { min-height: 44px; padding: 8px 10px; }
 
+/* ----- Sign-up drag reorder (v2.4.8) ----- */
+.draghandle {
+  flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
+  width: 34px; height: 44px; margin-left: -6px; border-radius: 8px;
+  color: #7d94a8; font-size: 19px; line-height: 1; cursor: grab;
+  touch-action: none; user-select: none; -webkit-user-select: none;
+}
+.draghandle:active { cursor: grabbing; background: #e2ebf2; }
+.entrycard { transition: transform .12s ease; }
+.entrycard.dragging {
+  transition: none; position: relative; z-index: 5; opacity: .97;
+  box-shadow: 0 6px 18px #0b3b5e33;
+}
+
 /* ----- Header ☰ menu ----- */
 .topbtns { display: flex; align-items: center; gap: 8px; justify-self: end; }
 .menupanel {
