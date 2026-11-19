@@ -29,6 +29,17 @@ there is no fixed round count. Finishing crowns the best running total
 a round-by-round breakdown, and Play Again keeps the rounds setup.
 Games saved before rounds existed load as classic Quick Score.
 
+**Winner-only matches (v2.4.7):** any Bracket or Round Robin match —
+playoff brackets included — can be decided with no score at all: the
+scoring sheet's "Or just pick the winner:" buttons record who won
+and nothing else. A winner-only match counts as played everywhere
+(standings get the win/loss but no points; brackets advance the
+winner and drop the loser as usual), shows as "X def. Y" in shared
+results, history and the player view, and can be converted to a
+scored result (or have its winner switched) by reopening it.
+Replacing a recorded *score* with a winner-only result asks for a
+second tap, since the numbers are discarded.
+
 **Mid-game walk-ups:** players can join after a game has started.
 Quick Score always allowed walk-ups; brackets accept them only while
 no match has been scored (the bracket is rebuilt with the newcomer as
