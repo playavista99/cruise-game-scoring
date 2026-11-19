@@ -1,6 +1,6 @@
 /* End-to-end DOM tests for v1.9: the menu's in-app update check.
    a. Remote version == current: "You're up to date ✓", no Update button.
-   b. Remote version newer (2.4 vs the running 2.3): update-available
+   b. Remote version newer (2.5 vs the running 2.4.7): update-available
       status + Update button; clicking
       it clears only the cgsa-shell caches, sets the just-updated flag,
       and reloads. A second pass with a waiting service worker checks
@@ -10,7 +10,23 @@
    d. Opening the menu triggers an automatic check.
    e. Version-compare units: equal, patch, minor, 1.10 > 1.9.
    f. Just-updated flag: after a reload, a check that confirms
-      current == remote shows the "Updated" status once and clears it. */
+      current == remote shows the "Updated" status once and clears it.
+   g. (v2.4.3) Checking state: while a check is in flight the status
+      reads "Checking for updates…", the Check button is disabled,
+      and the progress bar is visible; all restore when it lands.
+   h. (v2.4.3) Updating state: tapping Update now stores the target
+      version in sessionStorage and sets the visible updating UI —
+      disabled "Updating…" button, "Updating to v…" status, progress
+      bar — and the state persists until the reload.
+   i. (v2.4.3) Startup banner, target stored and reached: Home shows
+      "✓ Updated to v…", the flag + target are cleared, tap dismisses.
+   j. (v2.4.3) Startup banner, target stored but NOT reached: Home
+      shows the "didn't finish" warning naming the running version.
+   k. (v2.4.3) Startup banner, LEGACY (flag, no target): a startup
+      check with remote == running shows the success banner.
+   l. (v2.4.3) Legacy with a newer remote: "didn't finish" banner.
+   m. (v2.4.3) Legacy with a failed check (offline): NO banner, and
+      the flag is cleared. */
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
@@ -46,7 +62,7 @@ function boot(opts) {
   w.fetch = (url, fetchOpts) => {
     w.__fetchCalls.push({ url: String(url), opts: fetchOpts || {} });
     if (opts.fetchImpl) return opts.fetchImpl(url, fetchOpts, w);
-    return Promise.resolve(jsonResponse({ version: '2.3' }));
+    return Promise.resolve(jsonResponse({ version: '2.4.7' }));
   };
   w.__reloadCalls = 0;
   w.__cgsaReload = () => { w.__reloadCalls++; };
@@ -62,6 +78,7 @@ function boot(opts) {
     Object.defineProperty(w.navigator, 'serviceWorker', { value: opts.serviceWorker, configurable: true });
   }
   if (opts.justUpdated) w.sessionStorage.setItem('cgsa-just-updated', '1');
+  if (opts.updateTarget) w.sessionStorage.setItem('cgsa-update-target', opts.updateTarget);
   scripts.forEach((s) => w.eval(s));
   W = w;
   return w;
@@ -75,8 +92,8 @@ const updateHidden = () => $('#updateNowBtn').classList.contains('hidden');
 {
   const w = boot();
   const cmp = w.CruiseGameScoring.compareVersions;
-  ok(w.CruiseGameScoring.APP_VERSION === '2.3', 'e: APP_VERSION is 2.3');
-  ok($('#menuVersionText').textContent === 'Version 2.3', 'e: menu version line is rewritten from APP_VERSION');
+  ok(w.CruiseGameScoring.APP_VERSION === '2.4.7', 'e: APP_VERSION is 2.4.7');
+  ok($('#menuVersionText').textContent === 'Version 2.4.7', 'e: menu version line is rewritten from APP_VERSION');
   ok(cmp('1.9', '1.9') === 0, 'e: equal versions compare 0');
   ok(cmp('1.8.1', '1.9') < 0 && cmp('1.9', '1.8.1') > 0, 'e: patch-level compare works');
   ok(cmp('1.10', '1.9') > 0 && cmp('1.9', '1.10') < 0, 'e: 1.10 > 1.9 (tuple compare, not string/float)');
@@ -106,12 +123,12 @@ const updateHidden = () => $('#updateNowBtn').classList.contains('hidden');
 /* ============ (b) newer remote: Update button, cache clear, reload ============ */
 {
   const w = boot({
-    fetchImpl: () => Promise.resolve(jsonResponse({ version: '2.4' })),
+    fetchImpl: () => Promise.resolve(jsonResponse({ version: '2.5' })),
     cacheKeys: ['cgsa-shell-v21', 'cgsa-shell-v22', 'someone-elses-cache']
   });
   click($('#menuBtn'), 'open menu');
   await tick(40);
-  ok(status() === 'Update available: v2.4', 'b: newer remote shows update status, got: ' + status());
+  ok(status() === 'Update available: v2.5', 'b: newer remote shows update status, got: ' + status());
   ok(!updateHidden(), 'b: Update button appears for a newer remote');
   click($('#updateNowBtn'), 'update now');
   await tick(60);
@@ -136,13 +153,13 @@ const updateHidden = () => $('#updateNowBtn').classList.contains('hidden');
     removeEventListener: (type, fn) => { if (listeners[type] === fn) delete listeners[type]; }
   };
   const w = boot({
-    fetchImpl: () => Promise.resolve(jsonResponse({ version: '2.4' })),
+    fetchImpl: () => Promise.resolve(jsonResponse({ version: '2.5' })),
     serviceWorker: sw,
     cacheKeys: ['cgsa-shell-v22']
   });
   click($('#menuBtn'), 'open menu');
   await tick(40);
-  ok(status() === 'Update available: v2.4', 'b2: update available with a service worker, got: ' + status());
+  ok(status() === 'Update available: v2.5', 'b2: update available with a service worker, got: ' + status());
   click($('#updateNowBtn'), 'update now (sw)');
   await tick(60);
   ok(calls.update === 1, 'b2: registration.update() was called');
@@ -174,6 +191,112 @@ const updateHidden = () => $('#updateNowBtn').classList.contains('hidden');
   ok(status() === "Updated — you're on the latest version ✓", 'f: post-update confirmation status, got: ' + status());
   ok(w.sessionStorage.getItem('cgsa-just-updated') === null, 'f: flag cleared after being shown');
   ok(updateHidden(), 'f: no Update button on the confirmation status');
+}
+
+/* ============ (g) checking state is visible while in flight ============ */
+{
+  let resolveCheck = null;
+  const w = boot({
+    fetchImpl: () => new Promise((res) => { resolveCheck = () => res(jsonResponse({ version: '2.4.7' })); })
+  });
+  click($('#menuBtn'), 'open menu');
+  ok(status() === 'Checking for updates…', 'g: status shows checking while in flight, got: ' + status());
+  ok($('#checkUpdatesBtn').disabled === true, 'g: Check button disabled while checking');
+  ok(!$('#updateProgress').classList.contains('hidden'), 'g: progress bar visible while checking');
+  await tick(10);
+  ok(status() === 'Checking for updates…', 'g: still checking while the fetch is unresolved');
+  resolveCheck();
+  await tick(40);
+  ok(status() === "You're up to date ✓", 'g: check lands on up-to-date, got: ' + status());
+  ok($('#checkUpdatesBtn').disabled === false && $('#checkUpdatesBtn').textContent === 'Check for updates',
+    'g: Check button restored after the check');
+  ok($('#updateProgress').classList.contains('hidden'), 'g: progress bar hidden after the check');
+}
+
+/* ============ (h) updating state: UI + stored target ============ */
+{
+  const w = boot({
+    fetchImpl: () => Promise.resolve(jsonResponse({ version: '2.5' })),
+    cacheKeys: ['cgsa-shell-v22']
+  });
+  click($('#menuBtn'), 'open menu');
+  await tick(40);
+  ok(status() === 'Update available: v2.5', 'h: update available before tap, got: ' + status());
+  click($('#updateNowBtn'), 'update now');
+  ok($('#updateNowBtn').disabled === true, 'h: Update button disabled while updating');
+  ok($('#updateNowBtn').textContent === 'Updating…', 'h: Update button relabeled, got: ' + $('#updateNowBtn').textContent);
+  ok(status() === "Updating to v2.5 — the app will reload itself when it's ready. On a slow connection this can take a minute.",
+    'h: status explains the update + reload, got: ' + status());
+  ok(!$('#updateProgress').classList.contains('hidden'), 'h: progress bar visible while updating');
+  ok(w.sessionStorage.getItem('cgsa-update-target') === '2.5', 'h: target version stored in sessionStorage');
+  ok(w.sessionStorage.getItem('cgsa-just-updated') === '1', 'h: just-updated flag set alongside');
+  await tick(60);
+  ok(w.__reloadCalls === 1, 'h: update proceeded to its reload');
+  ok($('#updateNowBtn').disabled === true && $('#updateNowBtn').textContent === 'Updating…',
+    'h: updating state persists until the reload (not restored early)');
+}
+
+/* ============ (i) startup banner: target stored and reached ============ */
+{
+  const w = boot({ justUpdated: true, updateTarget: '2.4.7' });
+  await tick(50);
+  const banner = $('#updateBanner');
+  ok(!!banner, 'i: Home shows the post-update banner');
+  ok(banner && banner.textContent === '✓ Updated to v2.4.7', 'i: success banner text, got: ' + (banner && banner.textContent));
+  ok(banner && banner.classList.contains('success'), 'i: banner uses the success style');
+  ok(w.sessionStorage.getItem('cgsa-just-updated') === null, 'i: just-updated flag cleared');
+  ok(w.sessionStorage.getItem('cgsa-update-target') === null, 'i: stored target cleared');
+  click(banner, 'dismiss banner');
+  ok($('#updateBanner') === null, 'i: banner dismisses on tap');
+}
+
+/* ============ (j) startup banner: target stored, not reached ============ */
+{
+  const w = boot({ justUpdated: true, updateTarget: '2.5' });
+  await tick(50);
+  const banner = $('#updateBanner');
+  ok(!!banner, 'j: Home shows the post-update banner');
+  ok(banner && banner.textContent === "The update didn't finish — you're still on v2.4.7. Check your connection, then try again from the ☰ menu.",
+    'j: failure banner names the running version, got: ' + (banner && banner.textContent));
+  ok(banner && banner.classList.contains('warning'), 'j: banner uses the warning style');
+  ok(w.sessionStorage.getItem('cgsa-just-updated') === null, 'j: just-updated flag cleared');
+  ok(w.sessionStorage.getItem('cgsa-update-target') === null, 'j: stored target cleared');
+}
+
+/* ============ (k) startup banner: legacy flag, remote == running ============ */
+{
+  const w = boot({ justUpdated: true });
+  await tick(60);
+  const banner = $('#updateBanner');
+  ok(!!banner, 'k: legacy update still gets a Home banner');
+  ok(banner && banner.textContent === '✓ Updated to v2.4.7', 'k: legacy success banner text, got: ' + (banner && banner.textContent));
+  ok(w.sessionStorage.getItem('cgsa-just-updated') === null, 'k: legacy flag cleared after the banner decision');
+}
+
+/* ============ (l) startup banner: legacy flag, remote newer ============ */
+{
+  const w = boot({
+    justUpdated: true,
+    fetchImpl: () => Promise.resolve(jsonResponse({ version: '2.5' }))
+  });
+  await tick(60);
+  const banner = $('#updateBanner');
+  ok(!!banner, 'l: legacy update with a newer remote gets a banner');
+  ok(banner && banner.textContent === "The update didn't finish — you're still on v2.4.7. Check your connection, then try again from the ☰ menu.",
+    'l: legacy failure banner text, got: ' + (banner && banner.textContent));
+  ok(banner && banner.classList.contains('warning'), 'l: legacy failure uses the warning style');
+  ok(w.sessionStorage.getItem('cgsa-just-updated') === null, 'l: legacy flag cleared');
+}
+
+/* ============ (m) startup banner: legacy flag, check fails ============ */
+{
+  const w = boot({
+    justUpdated: true,
+    fetchImpl: () => Promise.reject(new Error('offline'))
+  });
+  await tick(60);
+  ok($('#updateBanner') === null, 'm: no banner when the legacy startup check fails');
+  ok(w.sessionStorage.getItem('cgsa-just-updated') === null, 'm: flag cleared even when the check fails');
 }
 
 console.log('\n' + checks + ' checks, ' + failures + ' failures');
