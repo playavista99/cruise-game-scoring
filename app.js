@@ -12,7 +12,7 @@
      line in index.html, the <meta name="app-version"> tag in
      index.html, and the service-worker cache name are bumped
      alongside it on every release — see the README release checklist. */
-  const APP_VERSION = '2.4.7';
+  const APP_VERSION = '2.4.8';
   const UPDATE_FLAG_KEY = 'cgsa-just-updated';
   const UPDATE_TARGET_KEY = 'cgsa-update-target';
   const UPDATE_CONFIRMED_KEY = 'cgsa-update-confirmed';
@@ -1189,18 +1189,25 @@
       '<button class="btn secondary block" id="copyPlayersBtn">📋 Copy players from another game…</button>' +
       '<p class="note" id="rrPreview"></p>' +
       '<div class="row wrap">' +
-      (draft.format === 'bracket' ? '<button class="btn secondary" id="shuffleBtn">🔀 Shuffle seeds</button>' : '') +
+      (draft.format === 'bracket' || draft.format === 'rr' ? '<button class="btn secondary" id="shuffleBtn">🔀 Randomize order</button>' : '') +
       '<span class="grow"></span><span class="sub" id="entryCount"></span></div>' +
+      (draft.format === 'bracket' || draft.format === 'rr' ? '<p class="note">Order decides the matchups — randomize or drag to arrange.</p>' : '') +
       '<button class="btn block" id="startBtn" style="margin-top:12px">Start game</button>' +
       '<p class="note" id="startHint" style="text-align:center;margin:8px 0 0"' + (draft.entries.length < 2 ? '' : ' hidden') + '>' + startHintText() + '</p>';
     return h;
   };
   let signupEditIdx = -1; // sign-up row whose name is being edited inline (-1 = none)
+  let signupRefreshFn = null; // BINDS.signup's refresh(), for the reorder seam below
   function entryRowHTML(e, i) {
     // Colors off (setup choice): the row is plain — no swatch, no tag.
     const c = (!draft || draft.useColors !== false) ? entryColor(draft.entries, e) : null;
     const editing = signupEditIdx === i;
-    return '<div class="card row" style="margin:6px 0;padding:10px 12px">' +
+    // Drag reorder (v2.4.8): bracket/RR sign-ups only — the order is
+    // the seeding / pairing order there; Quick Score order is just a
+    // list, so its rows get no handle.
+    const canDrag = !!draft && (draft.format === 'bracket' || draft.format === 'rr');
+    return '<div class="card row entrycard" data-entryrow="' + i + '" style="margin:6px 0;padding:10px 12px">' +
+      (canDrag ? '<span class="draghandle" data-draghandle="' + i + '" role="button" aria-label="Drag to reorder ' + esc(e.name) + '">⠿</span>' : '') +
       (c ? '<button class="colorswatch" data-colorpick="' + i + '" style="background:' + c.hex + '" aria-label="Color: ' + c.name + '. Tap to change"></button>' : '') +
       '<div class="grow">' +
       (editing
@@ -1212,6 +1219,25 @@
       (e.members ? '<div class="sub">' + esc(e.members) + '</div>' : '') +
       '</div><button class="iconbtn" data-delentry="' + i + '" aria-label="Remove">✕</button></div>';
   }
+  /* Sign-up ordering seam (v2.4.8): moves draft.entries[from] to
+     position `to` and re-renders the sign-up list. This is the exact
+     commit the drag-and-drop performs on release; also exposed on
+     window.CruiseGameScoring for tests. No-ops without a draft. */
+  function signupMove(from, to) {
+    if (!draft || !draft.entries || draft.entries.length < 2) return;
+    const n = draft.entries.length;
+    from = Math.max(0, Math.min(n - 1, from | 0));
+    to = Math.max(0, Math.min(n - 1, to | 0));
+    if (from === to) return;
+    const moved = draft.entries.splice(from, 1)[0];
+    draft.entries.splice(to, 0, moved);
+    signupEditIdx = -1;
+    if (signupRefreshFn) signupRefreshFn();
+  }
+  window.CruiseGameScoring.signupMove = signupMove;
+  window.CruiseGameScoring.signupOrder = function () {
+    return draft ? draft.entries.map(function (e) { return e.id; }) : [];
+  };
   BINDS.signup = function () {
     bindNavRow(function () { go('setup'); });
     signupEditIdx = -1;
@@ -1259,6 +1285,53 @@
           });
         });
       });
+      // Drag-to-reorder (bracket/RR only — handles render only there).
+      // Pointer Events, started ONLY from the ⠿ handle, so the row's
+      // name edit, color swatch and remove button never see the drag.
+      // The handle's touch-action:none keeps the page from scrolling
+      // while a touch drag is in progress. The dragged row tracks the
+      // pointer; rows between the start slot and the drop slot shift
+      // by one row-step to preview the gap. Release commits through
+      // signupMove() — the same reorder the test seam performs.
+      document.querySelectorAll('[data-draghandle]').forEach(function (hd) {
+        hd.addEventListener('pointerdown', function (ev) {
+          const list = document.getElementById('entryList');
+          const from = parseInt(hd.getAttribute('data-draghandle'), 10);
+          const row = list ? list.querySelector('[data-entryrow="' + from + '"]') : null;
+          if (!list || !row) return;
+          ev.preventDefault();
+          const rows = Array.prototype.slice.call(list.querySelectorAll('[data-entryrow]'));
+          const step = rows.length > 1
+            ? rows[1].getBoundingClientRect().top - rows[0].getBoundingClientRect().top
+            : 0;
+          const startY = ev.clientY;
+          let target = from;
+          row.classList.add('dragging');
+          const onMove = function (me) {
+            if (!(step > 0)) return;
+            const dy = Math.max(-from * step, Math.min((rows.length - 1 - from) * step, me.clientY - startY));
+            row.style.transform = 'translateY(' + dy + 'px)';
+            target = Math.max(0, Math.min(rows.length - 1, from + Math.round(dy / step)));
+            rows.forEach(function (r, idx) {
+              if (r === row) return;
+              let shift = 0;
+              if (from < target && idx > from && idx <= target) shift = -step;
+              else if (target < from && idx >= target && idx < from) shift = step;
+              r.style.transform = shift ? 'translateY(' + shift + 'px)' : '';
+            });
+          };
+          const onUp = function () {
+            document.removeEventListener('pointermove', onMove);
+            document.removeEventListener('pointerup', onUp);
+            document.removeEventListener('pointercancel', onUp);
+            if (target !== from) signupMove(from, target); // commits + re-renders
+            else refresh(); // no move: re-render clears the drag styles
+          };
+          document.addEventListener('pointermove', onMove);
+          document.addEventListener('pointerup', onUp);
+          document.addEventListener('pointercancel', onUp);
+        });
+      });
       const nEntries = draft.entries.length;
       document.getElementById('entryCount').textContent = nEntries +
         (draft.entryKind === 'teams' ? (nEntries === 1 ? ' team' : ' teams') : (nEntries === 1 ? ' player' : ' players'));
@@ -1283,6 +1356,7 @@
         });
       }
     };
+    signupRefreshFn = refresh;
     const addFromInputs = function () {
       const nm = document.getElementById('newName');
       const name = nm.value.trim();
