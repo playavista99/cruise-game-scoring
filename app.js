@@ -12,7 +12,7 @@
      line in index.html, the <meta name="app-version"> tag in
      index.html, and the service-worker cache name are bumped
      alongside it on every release — see the README release checklist. */
-  const APP_VERSION = '2.4.4';
+  const APP_VERSION = '2.4.5';
   const UPDATE_FLAG_KEY = 'cgsa-just-updated';
   const UPDATE_TARGET_KEY = 'cgsa-update-target';
   const UPDATE_CONFIRMED_KEY = 'cgsa-update-confirmed';
@@ -4243,6 +4243,79 @@
         if (changed) { save(); if (screen.name === 'templates') render(); }
       }).catch(function () { /* offline */ });
   }
+  /* ----- Feedback inbox (v2.4.5) -----
+     The account screen reads back the `feedback` table the Send
+     feedback form writes to. The table's select policy ("owner
+     reads feedback" in supabase/schema.sql) grants reads ONLY to
+     the one authenticated account whose JWT email it names — every
+     other signed-in account's token simply gets zero rows back, and
+     signed-out visitors never see the section at all. The request
+     therefore carries the SESSION's access token (from
+     sb.auth.getSession(), the same session the template sync runs
+     on), never the anon key as the bearer: the anon key is only the
+     apikey header. Feedback text is untrusted input, so rows are
+     built with createElement/textContent — never innerHTML. */
+  function fbInboxNote(text) {
+    const p = document.createElement('p');
+    p.className = 'note';
+    p.textContent = text;
+    return p;
+  }
+  function fbInboxRow(row) {
+    const wrap = document.createElement('div');
+    wrap.className = 'fbinbox-row';
+    const msg = document.createElement('div');
+    msg.className = 'fbinbox-msg';
+    msg.textContent = row.message || '';
+    wrap.appendChild(msg);
+    if (row.name) {
+      const nm = document.createElement('div');
+      nm.className = 'fbinbox-name';
+      nm.textContent = row.name;
+      wrap.appendChild(nm);
+    }
+    const when = new Date(row.created_at);
+    if (!isNaN(when.getTime())) {
+      const dt = document.createElement('div');
+      dt.className = 'sub';
+      dt.textContent = when.toLocaleString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+      wrap.appendChild(dt);
+    }
+    return wrap;
+  }
+  let fbInboxSeq = 0;
+  function loadFeedbackInbox() {
+    const body = document.getElementById('fbInboxBody');
+    if (!body || !sb || !sbUser) return;
+    const cfg = window.APP_CONFIG || {};
+    if (!cfg.SUPABASE_URL || !cfg.SUPABASE_ANON_KEY || typeof fetch !== 'function') return;
+    const seq = ++fbInboxSeq;
+    body.innerHTML = '';
+    body.appendChild(fbInboxNote('Loading feedback…'));
+    sb.auth.getSession().then(function (res) {
+      const session = res && res.data ? res.data.session : null;
+      if (!session || !session.access_token) throw new Error('no session');
+      const headers = { Authorization: 'Bearer ' + session.access_token };
+      headers['api' + 'key'] = cfg.SUPABASE_ANON_KEY;
+      return fetch(cfg.SUPABASE_URL + '/rest/v1/feedback?select=name,message,created_at&order=created_at.desc', { headers: headers });
+    }).then(function (res) {
+      if (!res || !res.ok) throw new Error('HTTP ' + (res ? res.status : 0));
+      return res.json();
+    }).then(function (rows) {
+      if (seq !== fbInboxSeq) return;
+      const b = document.getElementById('fbInboxBody');
+      if (!b) return;
+      b.innerHTML = '';
+      if (!Array.isArray(rows) || !rows.length) { b.appendChild(fbInboxNote('No feedback yet.')); return; }
+      rows.forEach(function (row) { b.appendChild(fbInboxRow(row)); });
+    }).catch(function () {
+      if (seq !== fbInboxSeq) return;
+      const b = document.getElementById('fbInboxBody');
+      if (!b) return;
+      b.innerHTML = '';
+      b.appendChild(fbInboxNote('Couldn’t load feedback — check your connection.'));
+    });
+  }
   SCREENS.account = function () {
     let h = navRowHTML(true) + '<h1>Staff account</h1>' +
       '<p class="note">Optional. An account only syncs your <b>custom game templates</b> across your devices. Games, players, cabins and history always stay on this device, and the app works fully signed out.</p>';
@@ -4254,7 +4327,10 @@
       h += '<div class="card"><div class="gamename">Signed in</div><div class="sub">' + esc(sbUser.email || '') + '</div>' +
         '<p class="note">Your custom templates sync to this account when you are online.</p>' +
         '<button class="btn block" id="syncBtn">Sync templates now</button>' +
-        '<button class="btn ghost block" id="signOutBtn">Sign out</button></div>';
+        '<button class="btn ghost block" id="signOutBtn">Sign out</button></div>' +
+        '<div class="card"><div class="row spread"><div class="gamename">Feedback received</div>' +
+        '<button class="btn secondary small" id="fbRefreshBtn" type="button">↻ Refresh</button></div>' +
+        '<div id="fbInboxBody"><p class="note">Loading feedback…</p></div></div>';
     } else {
       h += '<div class="card"><label class="field"><span>Email</span><input type="email" id="accEmail" autocomplete="email"></label>' +
         '<label class="field"><span>Password</span><input type="password" id="accPass" autocomplete="current-password"></label>' +
@@ -4266,6 +4342,9 @@
   };
   BINDS.account = function () {
     bindNavRow(function () { go('home'); });
+    const fr = document.getElementById('fbRefreshBtn');
+    if (fr) fr.addEventListener('click', loadFeedbackInbox);
+    if (sbUser) loadFeedbackInbox();
     const so = document.getElementById('signOutBtn');
     if (so) so.addEventListener('click', function () { sb.auth.signOut(); });
     const sy = document.getElementById('syncBtn');
