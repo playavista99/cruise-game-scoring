@@ -313,11 +313,16 @@ input.nameedit { min-height: 44px; padding: 8px 10px; }
   box-shadow: 0 1px 4px #00000055;
 }
 
-/* ----- Feedback inbox (v2.4.5, account screen) ----- */
+/* ----- Feedback inbox (v2.4.5, account screen; management v2.4.6) ----- */
 .fbinbox-row { padding: 10px 0; border-top: 1px solid #e2ebf2; }
 .fbinbox-row:first-child { border-top: 0; padding-top: 2px; }
 .fbinbox-msg { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.45; }
+.fbinbox-unread .fbinbox-msg { font-weight: 700; }
+.fbinbox-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: #1f7fc1; margin-right: 7px; }
 .fbinbox-name { font-weight: 700; margin-top: 4px; }
+.fbinbox-email { color: #4a6072; font-size: 13.5px; margin-top: 2px; overflow-wrap: anywhere; }
+.fbinbox-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.fbinbox-actions a.btn { text-decoration: none; }
 
 /* ----- Share / QR panel ----- */
 .qrbox { display: flex; justify-content: center; padding: 10px 0 4px; }
