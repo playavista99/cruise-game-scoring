@@ -10,9 +10,16 @@
   function nextPow2(n) { let p = 1; while (p < n) p *= 2; return p; }
 
   /* ---------------- match outcome ---------------- */
-  // Winner of a scored head-to-head match under the game's win direction.
-  // Returns {winner, loser} or null when tied / unscored.
+  // Winner of a decided head-to-head match. A match can be decided
+  // two ways: by score (sa/sb under the game's win direction), or
+  // winner-only (v2.4.7) — staff picked the winner with no score
+  // recorded, so the match carries winnerOnly:true, scored:true,
+  // sa/sb null and an explicit winnerId/loserId. matchOutcome is
+  // the single choke point that honors the explicit winner, so
+  // bracket resolution and standings both see it.
+  // Returns {winner, loser} or null when tied / undecided.
   function matchOutcome(def, m) {
+    if (m.winnerOnly && m.winnerId) return { winner: m.winnerId, loser: m.loserId };
     if (m.sa === null || m.sa === undefined || m.sb === null || m.sb === undefined) return null;
     if (m.sa === m.sb) return null;
     const aWins = def.winDir === 'low' ? m.sa < m.sb : m.sa > m.sb;
@@ -49,7 +56,7 @@
       id: uid('m'), kind: 'brk', stage: stage, round: round,
       srcA: srcA, srcB: srcB, aId: null, bId: null,
       sa: null, sb: null, tapsA: [], tapsB: [],
-      scored: false, autoBye: false, winnerId: null, loserId: null
+      scored: false, autoBye: false, winnerOnly: false, winnerId: null, loserId: null
     };
   }
 
@@ -169,14 +176,14 @@
       for (const m of matches) {
         const va = srcValue(m.srcA, byId), vb = srcValue(m.srcB, byId);
         if (va.state === 'pending' || vb.state === 'pending') {
-          if (m.resolved) { m.resolved = false; m.aId = m.bId = null; m.winnerId = m.loserId = null; changed = true; }
+          if (m.resolved) { m.resolved = false; m.aId = m.bId = null; m.winnerId = m.loserId = null; m.winnerOnly = false; changed = true; }
           continue;
         }
         const na = va.state === 'ready' ? va.id : null;
         const nb = vb.state === 'ready' ? vb.id : null;
         if (m.aId !== na || m.bId !== nb) {
           m.aId = na; m.bId = nb;
-          m.sa = m.sb = null; m.tapsA = []; m.tapsB = []; m.scored = false; m.autoBye = false;
+          m.sa = m.sb = null; m.tapsA = []; m.tapsB = []; m.scored = false; m.autoBye = false; m.winnerOnly = false;
           changed = true;
         }
         const wasResolved = m.resolved;
@@ -218,7 +225,23 @@
     const m = matches.find(function (x) { return x.id === matchId; });
     if (!m || !m.aId || !m.bId) return false;
     if (sa === sb) return false; // brackets cannot end in a tie
-    m.sa = sa; m.sb = sb; m.scored = true;
+    m.sa = sa; m.sb = sb; m.scored = true; m.winnerOnly = false;
+    resolveBracket(def, matches);
+    return true;
+  }
+
+  // Decide a bracket match winner-only (v2.4.7): no score, just the
+  // winner. The loser is always the other side, so double-elimination
+  // drop-downs route exactly as with a scored match. Entering a real
+  // score later (scoreBracketMatch) clears the flag again.
+  function pickBracketWinner(def, matches, matchId, winnerId) {
+    const m = matches.find(function (x) { return x.id === matchId; });
+    if (!m || !m.aId || !m.bId) return false;
+    if (winnerId !== m.aId && winnerId !== m.bId) return false;
+    m.sa = null; m.sb = null; m.tapsA = []; m.tapsB = [];
+    m.scored = true; m.winnerOnly = true;
+    m.winnerId = winnerId;
+    m.loserId = winnerId === m.aId ? m.bId : m.aId;
     resolveBracket(def, matches);
     return true;
   }
@@ -230,9 +253,18 @@
       table[e.id] = { id: e.id, played: 0, w: 0, l: 0, d: 0, pf: 0, pa: 0, diff: 0 };
     });
     matches.forEach(function (m) {
-      if (!m.scored || m.autoBye || m.sa === null || m.sb === null) return;
+      if (!m.scored || m.autoBye) return;
       const A = table[m.aId], B = table[m.bId];
       if (!A || !B) return;
+      if (m.winnerOnly) {
+        // Winner-only result (v2.4.7): a win and a loss, but no
+        // points — PF/PA and point difference get 0 from this match,
+        // so mixed scored / winner-only tournaments total correctly.
+        A.played++; B.played++;
+        if (m.winnerId === m.aId) { A.w++; B.l++; } else { B.w++; A.l++; }
+        return;
+      }
+      if (m.sa === null || m.sb === null) return;
       A.played++; B.played++;
       A.pf += m.sa; A.pa += m.sb; B.pf += m.sb; B.pa += m.sa;
       const out = matchOutcome(def, m);
@@ -402,7 +434,7 @@
         matches.push({
           id: uid('m'), kind: 'rr', stage: 'rr', round: ri + 1,
           aId: pr[0], bId: pr[1], sa: null, sb: null, tapsA: [], tapsB: [],
-          scored: false, autoBye: false, winnerId: null, loserId: null
+          scored: false, autoBye: false, winnerOnly: false, winnerId: null, loserId: null
         });
       });
     });
@@ -591,7 +623,7 @@
       game.matches.push({
         id: uid('m'), kind: 'rr', stage: 'rr', round: 1,
         aId: pr[0], bId: pr[1], sa: null, sb: null, tapsA: [], tapsB: [],
-        scored: false, autoBye: false, winnerId: null, loserId: null
+        scored: false, autoBye: false, winnerOnly: false, winnerId: null, loserId: null
       });
     });
     if (res.bye) game.rrByes.push(res.bye);
@@ -639,7 +671,7 @@
       game.matches.push({
         id: uid('m'), kind: 'rr', stage: 'rr', round: loneRound,
         aId: only, bId: others[0], sa: null, sb: null, tapsA: [], tapsB: [],
-        scored: false, autoBye: false, winnerId: null, loserId: null
+        scored: false, autoBye: false, winnerOnly: false, winnerId: null, loserId: null
       });
       game.rrRoundsGenerated = loneRound;
       return loneRound;
@@ -650,7 +682,7 @@
       game.matches.push({
         id: uid('m'), kind: 'rr', stage: 'rr', round: roundNo,
         aId: pr[0], bId: pr[1], sa: null, sb: null, tapsA: [], tapsB: [],
-        scored: false, autoBye: false, winnerId: null, loserId: null
+        scored: false, autoBye: false, winnerOnly: false, winnerId: null, loserId: null
       });
     });
     if (res.bye) game.rrByes.push(res.bye);
@@ -659,14 +691,30 @@
   }
 
   // Scoring an RR match: records the score and NOTHING else — in
-  // particular it never generates a round.
+  // particular it never generates a round. Entering a score on a
+  // winner-only match converts it to a normal scored match (a draw
+  // becomes possible again, exactly as for any scored RR match).
   function scoreRRMatch(game, def, matchId, sa, sb) {
     const m = game.matches.find(function (x) { return x.id === matchId; });
     if (!m) return false;
-    m.sa = sa; m.sb = sb; m.scored = true;
+    m.sa = sa; m.sb = sb; m.scored = true; m.winnerOnly = false;
     const out = matchOutcome(def, m);
     m.winnerId = out ? out.winner : null;
     m.loserId = out ? out.loser : null;
+    return true;
+  }
+
+  // Decide an RR match winner-only (v2.4.7): no score, just the
+  // winner — never a draw. Counts as played everywhere `scored`
+  // is the gate (standings, all-rounds-scored, schedule rebuilds).
+  function pickRRWinner(game, matchId, winnerId) {
+    const m = game.matches.find(function (x) { return x.id === matchId; });
+    if (!m) return false;
+    if (winnerId !== m.aId && winnerId !== m.bId) return false;
+    m.sa = null; m.sb = null; m.tapsA = []; m.tapsB = [];
+    m.scored = true; m.winnerOnly = true;
+    m.winnerId = winnerId;
+    m.loserId = winnerId === m.aId ? m.bId : m.aId;
     return true;
   }
 
@@ -759,11 +807,11 @@
     matchOutcome: matchOutcome, tapsTotal: tapsTotal,
     seedPositions: seedPositions,
     buildSingleElim: buildSingleElim, buildDoubleElim: buildDoubleElim,
-    resolveBracket: resolveBracket, scoreBracketMatch: scoreBracketMatch,
+    resolveBracket: resolveBracket, scoreBracketMatch: scoreBracketMatch, pickBracketWinner: pickBracketWinner,
     computeStandings: computeStandings, gamesRange: gamesRange,
     buildPresetRR: buildPresetRR, buildRemainingRR: buildRemainingRR,
     createResultsBasedRR: createResultsBasedRR, generateNextRRRound: generateNextRRRound,
-    scoreRRMatch: scoreRRMatch, rrGamesPlayed: rrGamesPlayed,
+    scoreRRMatch: scoreRRMatch, pickRRWinner: pickRRWinner, rrGamesPlayed: rrGamesPlayed,
     rrAllRoundsScored: rrAllRoundsScored, rrComplete: rrComplete
   };
 
