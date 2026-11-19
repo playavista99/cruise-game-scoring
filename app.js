@@ -12,7 +12,7 @@
      line in index.html, the <meta name="app-version"> tag in
      index.html, and the service-worker cache name are bumped
      alongside it on every release — see the README release checklist. */
-  const APP_VERSION = '2.4.5';
+  const APP_VERSION = '2.4.6';
   const UPDATE_FLAG_KEY = 'cgsa-just-updated';
   const UPDATE_TARGET_KEY = 'cgsa-update-target';
   const UPDATE_CONFIRMED_KEY = 'cgsa-update-confirmed';
@@ -4243,7 +4243,7 @@
         if (changed) { save(); if (screen.name === 'templates') render(); }
       }).catch(function () { /* offline */ });
   }
-  /* ----- Feedback inbox (v2.4.5) -----
+  /* ----- Feedback inbox (v2.4.5; management added v2.4.6) -----
      The account screen reads back the `feedback` table the Send
      feedback form writes to. The table's select policy ("owner
      reads feedback" in supabase/schema.sql) grants reads ONLY to
@@ -4254,7 +4254,12 @@
      sb.auth.getSession(), the same session the template sync runs
      on), never the anon key as the bearer: the anon key is only the
      apikey header. Feedback text is untrusted input, so rows are
-     built with createElement/textContent — never innerHTML. */
+     built with createElement/textContent — never innerHTML.
+     v2.4.6 adds management on the same session token: rows carry
+     the sender's account email (sending now requires sign-in) and
+     a read_at stamp; the owner can mark rows read/unread (PATCH,
+     gated server-side by the "owner updates feedback" policy) and
+     reply via a mailto: link when an email is present. */
   function fbInboxNote(text) {
     const p = document.createElement('p');
     p.className = 'note';
@@ -4263,16 +4268,28 @@
   }
   function fbInboxRow(row) {
     const wrap = document.createElement('div');
-    wrap.className = 'fbinbox-row';
+    wrap.className = 'fbinbox-row' + (row.read_at ? '' : ' fbinbox-unread');
     const msg = document.createElement('div');
     msg.className = 'fbinbox-msg';
-    msg.textContent = row.message || '';
+    if (!row.read_at) {
+      const dot = document.createElement('span');
+      dot.className = 'fbinbox-dot';
+      dot.setAttribute('aria-hidden', 'true');
+      msg.appendChild(dot);
+    }
+    msg.appendChild(document.createTextNode(row.message || ''));
     wrap.appendChild(msg);
     if (row.name) {
       const nm = document.createElement('div');
       nm.className = 'fbinbox-name';
       nm.textContent = row.name;
       wrap.appendChild(nm);
+    }
+    if (row.email) {
+      const em = document.createElement('div');
+      em.className = 'fbinbox-email';
+      em.textContent = row.email;
+      wrap.appendChild(em);
     }
     const when = new Date(row.created_at);
     if (!isNaN(when.getTime())) {
@@ -4281,15 +4298,95 @@
       dt.textContent = when.toLocaleString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
       wrap.appendChild(dt);
     }
+    const actions = document.createElement('div');
+    actions.className = 'fbinbox-actions';
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'btn secondary small';
+    toggle.textContent = row.read_at ? 'Mark unread' : 'Mark read';
+    toggle.addEventListener('click', function () { toggleFeedbackRead(row, toggle); });
+    actions.appendChild(toggle);
+    if (row.email) {
+      const reply = document.createElement('a');
+      reply.className = 'btn secondary small';
+      reply.textContent = 'Reply';
+      reply.href = 'mailto:' + row.email + '?subject=Re%3A%20Your%20All%20Ashore%20Game%20Scoring%20feedback';
+      actions.appendChild(reply);
+    }
+    wrap.appendChild(actions);
     return wrap;
   }
   let fbInboxSeq = 0;
+  let fbInboxRows = [];
+  function fbInboxShowError(text) {
+    const e = document.getElementById('fbInboxError');
+    if (!e) return;
+    e.textContent = text || '';
+    e.style.display = text ? '' : 'none';
+  }
+  function renderFbInbox() {
+    const unread = fbInboxRows.filter(function (r) { return !r.read_at; }).length;
+    const title = document.getElementById('fbInboxTitle');
+    if (title) title.textContent = 'Feedback received' + (unread ? ' · ' + unread + ' unread' : '');
+    const ma = document.getElementById('fbMarkAllBtn');
+    if (ma) ma.style.display = unread ? '' : 'none';
+    const b = document.getElementById('fbInboxBody');
+    if (!b) return;
+    b.innerHTML = '';
+    if (!fbInboxRows.length) { b.appendChild(fbInboxNote('No feedback yet.')); return; }
+    fbInboxRows.forEach(function (row) { b.appendChild(fbInboxRow(row)); });
+  }
+  function fbPatchRead(ids, readAt) {
+    const cfg = window.APP_CONFIG || {};
+    return sb.auth.getSession().then(function (res) {
+      const session = res && res.data ? res.data.session : null;
+      if (!session || !session.access_token) throw new Error('no session');
+      const headers = { Authorization: 'Bearer ' + session.access_token, 'Content-Type': 'application/json', Prefer: 'return=minimal' };
+      headers['api' + 'key'] = cfg.SUPABASE_ANON_KEY;
+      const filter = ids.length === 1
+        ? 'id=eq.' + encodeURIComponent(ids[0])
+        : 'id=in.(' + ids.map(function (i) { return encodeURIComponent(i); }).join(',') + ')';
+      return fetch(cfg.SUPABASE_URL + '/rest/v1/feedback?' + filter, {
+        method: 'PATCH', headers: headers, body: JSON.stringify({ read_at: readAt })
+      });
+    }).then(function (res) {
+      if (!res || !res.ok) throw new Error('HTTP ' + (res ? res.status : 0));
+    });
+  }
+  function toggleFeedbackRead(row, btn) {
+    if (!sb || !sbUser) return;
+    const target = row.read_at ? null : new Date().toISOString();
+    if (btn) btn.disabled = true;
+    fbPatchRead([row.id], target).then(function () {
+      row.read_at = target;
+      fbInboxShowError('');
+      renderFbInbox();
+    }).catch(function () {
+      if (btn) btn.disabled = false;
+      fbInboxShowError('Couldn’t update — try again.');
+    });
+  }
+  function markAllFeedbackRead(btn) {
+    const unread = fbInboxRows.filter(function (r) { return !r.read_at; });
+    if (!unread.length || !sb || !sbUser) return;
+    const target = new Date().toISOString();
+    if (btn) btn.disabled = true;
+    fbPatchRead(unread.map(function (r) { return r.id; }), target).then(function () {
+      unread.forEach(function (r) { r.read_at = target; });
+      fbInboxShowError('');
+      renderFbInbox();
+    }).catch(function () {
+      if (btn) btn.disabled = false;
+      fbInboxShowError('Couldn’t update — try again.');
+    });
+  }
   function loadFeedbackInbox() {
     const body = document.getElementById('fbInboxBody');
     if (!body || !sb || !sbUser) return;
     const cfg = window.APP_CONFIG || {};
     if (!cfg.SUPABASE_URL || !cfg.SUPABASE_ANON_KEY || typeof fetch !== 'function') return;
     const seq = ++fbInboxSeq;
+    fbInboxShowError('');
     body.innerHTML = '';
     body.appendChild(fbInboxNote('Loading feedback…'));
     sb.auth.getSession().then(function (res) {
@@ -4297,17 +4394,14 @@
       if (!session || !session.access_token) throw new Error('no session');
       const headers = { Authorization: 'Bearer ' + session.access_token };
       headers['api' + 'key'] = cfg.SUPABASE_ANON_KEY;
-      return fetch(cfg.SUPABASE_URL + '/rest/v1/feedback?select=name,message,created_at&order=created_at.desc', { headers: headers });
+      return fetch(cfg.SUPABASE_URL + '/rest/v1/feedback?select=id,name,message,email,created_at,read_at&order=created_at.desc', { headers: headers });
     }).then(function (res) {
       if (!res || !res.ok) throw new Error('HTTP ' + (res ? res.status : 0));
       return res.json();
     }).then(function (rows) {
       if (seq !== fbInboxSeq) return;
-      const b = document.getElementById('fbInboxBody');
-      if (!b) return;
-      b.innerHTML = '';
-      if (!Array.isArray(rows) || !rows.length) { b.appendChild(fbInboxNote('No feedback yet.')); return; }
-      rows.forEach(function (row) { b.appendChild(fbInboxRow(row)); });
+      fbInboxRows = Array.isArray(rows) ? rows : [];
+      renderFbInbox();
     }).catch(function () {
       if (seq !== fbInboxSeq) return;
       const b = document.getElementById('fbInboxBody');
@@ -4328,8 +4422,10 @@
         '<p class="note">Your custom templates sync to this account when you are online.</p>' +
         '<button class="btn block" id="syncBtn">Sync templates now</button>' +
         '<button class="btn ghost block" id="signOutBtn">Sign out</button></div>' +
-        '<div class="card"><div class="row spread"><div class="gamename">Feedback received</div>' +
-        '<button class="btn secondary small" id="fbRefreshBtn" type="button">↻ Refresh</button></div>' +
+        '<div class="card"><div class="row spread"><div class="gamename" id="fbInboxTitle">Feedback received</div>' +
+        '<span><button class="btn secondary small" id="fbMarkAllBtn" type="button" style="display:none">Mark all read</button> ' +
+        '<button class="btn secondary small" id="fbRefreshBtn" type="button">↻ Refresh</button></span></div>' +
+        '<p class="note" id="fbInboxError" style="display:none"></p>' +
         '<div id="fbInboxBody"><p class="note">Loading feedback…</p></div></div>';
     } else {
       h += '<div class="card"><label class="field"><span>Email</span><input type="email" id="accEmail" autocomplete="email"></label>' +
@@ -4344,6 +4440,8 @@
     bindNavRow(function () { go('home'); });
     const fr = document.getElementById('fbRefreshBtn');
     if (fr) fr.addEventListener('click', loadFeedbackInbox);
+    const ma = document.getElementById('fbMarkAllBtn');
+    if (ma) ma.addEventListener('click', function () { markAllFeedbackRead(ma); });
     if (sbUser) loadFeedbackInbox();
     const so = document.getElementById('signOutBtn');
     if (so) so.addEventListener('click', function () { sb.auth.signOut(); });
@@ -4836,11 +4934,29 @@
   /* Send feedback — ONE shared form, used by the menu entry and the
      home-page button. Inserts into the Supabase `feedback` table
      (insert-only RLS). A failed insert says so plainly; the typed
-     text is never thrown away or silently "sent". */
+     text is never thrown away or silently "sent".
+     v2.4.6: sending REQUIRES sign-in, so every submission carries
+     the sender's account email automatically (no email field on the
+     form) and the owner can reply. The insert still goes out with
+     the anon key as bearer (the insert policy allows it); only the
+     email VALUE comes from the session. If the with-email insert
+     fails — e.g. the email column is not in the database yet — it
+     retries once with the pre-v2.4.6 body before giving up. */
   function openFeedback() {
     closeMenu();
+    if (!sb || !sbUser) {
+      openModal('<div class="feedbackbox"><h2 style="margin-top:0">✉️ Send feedback</h2>' +
+        '<p class="note">Sign in to send feedback — so we can reply to you.</p>' +
+        '<button class="btn feedbacksubmit block" id="fbGoAccount" type="button">Go to Account</button>' +
+        '<button class="btn ghost block" id="fbCancel" type="button">Cancel</button></div>');
+      document.getElementById('fbGoAccount').addEventListener('click', function () { closeModal(); go('account'); });
+      document.getElementById('fbCancel').addEventListener('click', closeModal);
+      return;
+    }
+    const senderEmail = sbUser.email || '';
     openModal('<div class="feedbackbox"><h2 style="margin-top:0">✉️ Send feedback</h2>' +
       '<p class="note">Ideas, bugs, a game we should add — it goes straight to the people who run this app.</p>' +
+      (senderEmail ? '<p class="note">Sending as ' + esc(senderEmail) + ' — replies go to this address.</p>' : '') +
       '<form id="fbForm">' +
       '<label class="field"><span>Your feedback</span><textarea id="fbMessage" rows="5" maxlength="2000" placeholder="What should we know?"></textarea></label>' +
       '<label class="field"><span>Your name (optional)</span><input type="text" id="fbName" maxlength="80" autocomplete="name"></label>' +
@@ -4871,22 +4987,41 @@
         Prefer: 'return=minimal'
       };
       fbHeaders['api' + 'key'] = cfg.SUPABASE_ANON_KEY;
-      fetch(cfg.SUPABASE_URL + '/rest/v1/feedback', {
-        method: 'POST',
-        headers: fbHeaders,
-        body: JSON.stringify({ message: message, name: nameVal ? nameVal : null })
-      }).then(function (res) {
-        if (!res.ok) throw new Error('HTTP ' + res.status);
+      const nameOrNull = nameVal ? nameVal : null;
+      const attempt = function (body) {
+        return fetch(cfg.SUPABASE_URL + '/rest/v1/feedback', {
+          method: 'POST',
+          headers: fbHeaders,
+          body: JSON.stringify(body)
+        }).then(function (res) {
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+        });
+      };
+      const finishOk = function () {
         openModal('<div class="feedbackbox"><div class="fb-thanks"><div class="thanks-ic">💌</div>' +
           '<h2>Thanks — feedback sent</h2>' +
           '<p class="note">We read everything. If it was about a game or a bug, it helps more than you know.</p>' +
           '<button class="btn feedbacksubmit block" id="fbThanksClose">Done</button></div></div>');
         document.getElementById('fbThanksClose').addEventListener('click', closeModal);
-      }).catch(function () {
+      };
+      const finishErr = function () {
         err.textContent = 'Sorry — feedback couldn’t be sent. Your text is still here, so please check your connection and try Send again.';
         btn.disabled = false;
         btn.textContent = 'Send feedback';
-      });
+      };
+      const send = function (email) {
+        attempt({ message: message, name: nameOrNull, email: email || null })
+          .catch(function () { return attempt({ message: message, name: nameOrNull }); })
+          .then(finishOk).catch(finishErr);
+      };
+      if (sb && sb.auth && typeof sb.auth.getSession === 'function') {
+        sb.auth.getSession().then(function (res) {
+          const s = res && res.data ? res.data.session : null;
+          send(s && s.user && s.user.email ? s.user.email : senderEmail);
+        }).catch(function () { send(senderEmail); });
+      } else {
+        send(senderEmail);
+      }
     });
     document.getElementById('fbMessage').focus();
   }
