@@ -1,6 +1,6 @@
 /* End-to-end DOM tests for v1.9: the menu's in-app update check.
    a. Remote version == current: "You're up to date ✓", no Update button.
-   b. Remote version newer (2.5 vs the running 2.4.7): update-available
+   b. Remote version newer (2.5 vs the running 2.4.8): update-available
       status + Update button; clicking
       it clears only the cgsa-shell caches, sets the just-updated flag,
       and reloads. A second pass with a waiting service worker checks
@@ -62,7 +62,7 @@ function boot(opts) {
   w.fetch = (url, fetchOpts) => {
     w.__fetchCalls.push({ url: String(url), opts: fetchOpts || {} });
     if (opts.fetchImpl) return opts.fetchImpl(url, fetchOpts, w);
-    return Promise.resolve(jsonResponse({ version: '2.4.7' }));
+    return Promise.resolve(jsonResponse({ version: '2.4.8' }));
   };
   w.__reloadCalls = 0;
   w.__cgsaReload = () => { w.__reloadCalls++; };
@@ -92,8 +92,8 @@ const updateHidden = () => $('#updateNowBtn').classList.contains('hidden');
 {
   const w = boot();
   const cmp = w.CruiseGameScoring.compareVersions;
-  ok(w.CruiseGameScoring.APP_VERSION === '2.4.7', 'e: APP_VERSION is 2.4.7');
-  ok($('#menuVersionText').textContent === 'Version 2.4.7', 'e: menu version line is rewritten from APP_VERSION');
+  ok(w.CruiseGameScoring.APP_VERSION === '2.4.8', 'e: APP_VERSION is 2.4.8');
+  ok($('#menuVersionText').textContent === 'Version 2.4.8', 'e: menu version line is rewritten from APP_VERSION');
   ok(cmp('1.9', '1.9') === 0, 'e: equal versions compare 0');
   ok(cmp('1.8.1', '1.9') < 0 && cmp('1.9', '1.8.1') > 0, 'e: patch-level compare works');
   ok(cmp('1.10', '1.9') > 0 && cmp('1.9', '1.10') < 0, 'e: 1.10 > 1.9 (tuple compare, not string/float)');
@@ -197,7 +197,7 @@ const updateHidden = () => $('#updateNowBtn').classList.contains('hidden');
 {
   let resolveCheck = null;
   const w = boot({
-    fetchImpl: () => new Promise((res) => { resolveCheck = () => res(jsonResponse({ version: '2.4.7' })); })
+    fetchImpl: () => new Promise((res) => { resolveCheck = () => res(jsonResponse({ version: '2.4.8' })); })
   });
   click($('#menuBtn'), 'open menu');
   ok(status() === 'Checking for updates…', 'g: status shows checking while in flight, got: ' + status());
@@ -238,11 +238,11 @@ const updateHidden = () => $('#updateNowBtn').classList.contains('hidden');
 
 /* ============ (i) startup banner: target stored and reached ============ */
 {
-  const w = boot({ justUpdated: true, updateTarget: '2.4.7' });
+  const w = boot({ justUpdated: true, updateTarget: '2.4.8' });
   await tick(50);
   const banner = $('#updateBanner');
   ok(!!banner, 'i: Home shows the post-update banner');
-  ok(banner && banner.textContent === '✓ Updated to v2.4.7', 'i: success banner text, got: ' + (banner && banner.textContent));
+  ok(banner && banner.textContent === '✓ Updated to v2.4.8', 'i: success banner text, got: ' + (banner && banner.textContent));
   ok(banner && banner.classList.contains('success'), 'i: banner uses the success style');
   ok(w.sessionStorage.getItem('cgsa-just-updated') === null, 'i: just-updated flag cleared');
   ok(w.sessionStorage.getItem('cgsa-update-target') === null, 'i: stored target cleared');
@@ -256,7 +256,7 @@ const updateHidden = () => $('#updateNowBtn').classList.contains('hidden');
   await tick(50);
   const banner = $('#updateBanner');
   ok(!!banner, 'j: Home shows the post-update banner');
-  ok(banner && banner.textContent === "The update didn't finish — you're still on v2.4.7. Check your connection, then try again from the ☰ menu.",
+  ok(banner && banner.textContent === "The update didn't finish — you're still on v2.4.8. Check your connection, then try again from the ☰ menu.",
     'j: failure banner names the running version, got: ' + (banner && banner.textContent));
   ok(banner && banner.classList.contains('warning'), 'j: banner uses the warning style');
   ok(w.sessionStorage.getItem('cgsa-just-updated') === null, 'j: just-updated flag cleared');
@@ -269,7 +269,7 @@ const updateHidden = () => $('#updateNowBtn').classList.contains('hidden');
   await tick(60);
   const banner = $('#updateBanner');
   ok(!!banner, 'k: legacy update still gets a Home banner');
-  ok(banner && banner.textContent === '✓ Updated to v2.4.7', 'k: legacy success banner text, got: ' + (banner && banner.textContent));
+  ok(banner && banner.textContent === '✓ Updated to v2.4.8', 'k: legacy success banner text, got: ' + (banner && banner.textContent));
   ok(w.sessionStorage.getItem('cgsa-just-updated') === null, 'k: legacy flag cleared after the banner decision');
 }
 
@@ -282,7 +282,7 @@ const updateHidden = () => $('#updateNowBtn').classList.contains('hidden');
   await tick(60);
   const banner = $('#updateBanner');
   ok(!!banner, 'l: legacy update with a newer remote gets a banner');
-  ok(banner && banner.textContent === "The update didn't finish — you're still on v2.4.7. Check your connection, then try again from the ☰ menu.",
+  ok(banner && banner.textContent === "The update didn't finish — you're still on v2.4.8. Check your connection, then try again from the ☰ menu.",
     'l: legacy failure banner text, got: ' + (banner && banner.textContent));
   ok(banner && banner.classList.contains('warning'), 'l: legacy failure uses the warning style');
   ok(w.sessionStorage.getItem('cgsa-just-updated') === null, 'l: legacy flag cleared');
