@@ -12,7 +12,7 @@
      line in index.html, the <meta name="app-version"> tag in
      index.html, and the service-worker cache name are bumped
      alongside it on every release — see the README release checklist. */
-  const APP_VERSION = '2.4.3';
+  const APP_VERSION = '2.4.4';
   const UPDATE_FLAG_KEY = 'cgsa-just-updated';
   const UPDATE_TARGET_KEY = 'cgsa-update-target';
   const UPDATE_CONFIRMED_KEY = 'cgsa-update-confirmed';
@@ -288,7 +288,6 @@
     if (bind) bind(screen.arg);
   }
   document.getElementById('brandBtn').addEventListener('click', function () { pendingCruiseId = null; pickReturn = null; go('home'); });
-  document.getElementById('accountBtn').addEventListener('click', function () { go('account'); });
 
   /* ---------------- shared fragments ---------------- */
   /* ----- Screen navigation row (v2.1) -----
@@ -420,7 +419,7 @@
     h += '<div class="row wrap" style="margin-top:14px">' +
       '<button class="btn secondary grow" id="historyBtn">🏆 History' + (finished.length ? ' (' + finished.length + ')' : '') + '</button>' +
       '<button class="btn secondary grow" id="templatesBtn">🎲 My games</button></div>';
-    h += '<p class="note" style="margin-top:16px">Everything is saved on this device and works with no connection. An optional staff account (top right) only syncs your custom game templates.</p>';
+    h += '<p class="note" style="margin-top:16px">Everything is saved on this device and works with no connection. An optional staff account (in the ☰ menu) only syncs your custom game templates.</p>';
     h += '<button class="btn feedbackbtn block" id="homeFeedbackBtn" style="margin-top:18px">✉️ Send feedback</button>';
     return h;
   };
@@ -4711,6 +4710,12 @@
      anywhere — including mid-game; the game stays in progress. */
   const menuHomeBtn = document.getElementById('menuHomeBtn');
   if (menuHomeBtn) menuHomeBtn.addEventListener('click', function () { closeMenu(); goHomeNav(); });
+
+  /* Menu Account entry (v2.4.4): second item in the panel. The staff
+     account used to be a topbar button; Jeff asked for it in the menu.
+     Closes the menu and opens the same account screen it always did. */
+  const menuAccountBtn = document.getElementById('menuAccountBtn');
+  if (menuAccountBtn) menuAccountBtn.addEventListener('click', function () { closeMenu(); go('account'); });
 
   const menuInstallBtn = document.getElementById('menuInstallBtn');
   if (menuInstallBtn) menuInstallBtn.addEventListener('click', openInstall);
