@@ -354,5 +354,154 @@ for (let n = 2; n <= 12; n++) {
   ok(E.planePoint(null, 1, 2) === null, 'measure: planePoint without H -> null');
 }
 
+/* ---------- winner-only match results (v2.4.7) ---------- */
+{
+  // matchOutcome honors the explicit winner regardless of winDir.
+  const wo = { aId: 'A', bId: 'B', sa: null, sb: null, winnerOnly: true, winnerId: 'B', loserId: 'A' };
+  const outLow = E.matchOutcome({ winDir: 'low' }, wo);
+  ok(outLow && outLow.winner === 'B' && outLow.loser === 'A', 'wo: matchOutcome returns the explicit winner under low-wins too');
+  ok(E.matchOutcome(DEF, { aId: 'A', bId: 'B', sa: null, sb: null, winnerOnly: false, winnerId: null }) === null,
+    'wo: no scores and no explicit winner is undecided');
+
+  // Single-elim decided ENTIRELY winner-only crowns the top seed.
+  {
+    const es = ids(8);
+    const matches = E.buildSingleElim(es);
+    E.resolveBracket(DEF, matches);
+    ok(E.pickBracketWinner(DEF, matches, matches[0].id, 'P99') === false, 'wo: pick rejects a non-participant');
+    let guard = 0;
+    while (guard++ < 100) {
+      const m = matches.find((x) => x.aId && x.bId && !x.scored);
+      if (!m) break;
+      const fav = es.indexOf(m.aId) < es.indexOf(m.bId) ? m.aId : m.bId;
+      ok(E.pickBracketWinner(DEF, matches, m.id, fav), 'wo: pick accepted for a playable match');
+    }
+    const champ = E.resolveBracket(DEF, matches);
+    ok(champ === es[0], `wo single-elim: champion is the top seed, got ${champ}`);
+    const real = matches.filter((m) => !m.autoBye);
+    ok(real.length === 7 && real.every((m) => m.scored && m.winnerOnly && m.sa === null && m.sb === null && m.winnerId && m.loserId),
+      'wo single-elim: every real match is a winner-only decision with no score');
+    // A winner-only feeder is DECIDED, not pending: the final was playable.
+    const fin = matches[matches.length - 1];
+    ok(fin.aId && fin.bId && fin.winnerId === es[0], 'wo single-elim: final resolved from winner-only feeders');
+    // Entering a real score afterwards converts the match back.
+    const sf = matches.find((m) => m.round === 2);
+    ok(E.scoreBracketMatch(DEF, matches, sf.id, 9, 4), 'wo: scoring over a winner-only match works');
+    ok(sf.winnerOnly === false && sf.sa === 9 && sf.sb === 4, 'wo: score entry clears the winner-only flag');
+  }
+
+  // Double-elim winner-only: losers route down correctly.
+  {
+    const es = ids(4);
+    const matches = E.buildDoubleElim(es);
+    E.resolveBracket(DEF, matches);
+    const wb1 = matches.filter((m) => m.stage === 'wb' && m.round === 1);
+    wb1.forEach((m) => E.pickBracketWinner(DEF, matches, m.id, m.aId)); // side A wins both WB openers
+    const lb1 = matches.find((m) => m.stage === 'lb' && m.round === 1);
+    ok(lb1.aId === wb1[0].bId && lb1.bId === wb1[1].bId,
+      'wo double-elim: LB opener is filled by the two WB losers');
+    let guard = 0;
+    while (guard++ < 200) {
+      const m = matches.find((x) => x.aId && x.bId && !x.scored);
+      if (!m) break;
+      const fav = es.indexOf(m.aId) < es.indexOf(m.bId) ? m.aId : m.bId;
+      E.pickBracketWinner(DEF, matches, m.id, fav);
+    }
+    const champ = E.resolveBracket(DEF, matches);
+    ok(champ === es[0], `wo double-elim: champion is the top seed, got ${champ}`);
+    const losses = {};
+    es.forEach((id) => (losses[id] = 0));
+    matches.forEach((m) => { if (m.loserId) losses[m.loserId]++; });
+    ok(es.every((id) => id === champ ? losses[id] <= 1 : losses[id] === 2),
+      'wo double-elim: every non-champion has exactly 2 losses, champion at most 1');
+    const gf = matches[matches.length - 1];
+    ok(gf.stage === 'gf' && gf.winnerOnly && gf.winnerId === champ, 'wo double-elim: grand final decided winner-only');
+  }
+
+  // RR standings: mixed scored + winner-only matches total correctly.
+  {
+    const es = entries(4); // P1..P4
+    const built = E.buildPresetRR(es.map((e) => e.id), 3); // full cycle, 6 matches
+    const game = { entries: es, matches: built.matches, rrByes: [] };
+    const find = (a, b) => game.matches.find((m) => E.pairKey(m.aId, m.bId) === E.pairKey(a, b));
+    E.scoreRRMatch(game, DEF, find('P1', 'P2').id, 10, 5);       // P1 wins scored
+    ok(E.pickRRWinner(game, find('P1', 'P3').id, 'P3'), 'wo rr: pick accepted'); // P3 beats P1, no score
+    E.scoreRRMatch(game, DEF, find('P2', 'P3').id, 7, 7);        // scored draw
+    ok(E.pickRRWinner(game, 'nope', 'P1') === false, 'wo rr: pick rejects an unknown match');
+    const woMatch = find('P1', 'P3');
+    ok(E.pickRRWinner(game, woMatch.id, 'P9') === false, 'wo rr: pick rejects a non-participant');
+    const st = E.computeStandings(es, game.matches, DEF);
+    const row = (id) => st.find((r) => r.id === id);
+    ok(row('P1').played === 2 && row('P1').w === 1 && row('P1').l === 1 && row('P1').pf === 10 && row('P1').pa === 5,
+      'wo rr: P1 — win+loss counted, PF/PA only from the scored match');
+    ok(row('P3').played === 2 && row('P3').w === 1 && row('P3').d === 1 && row('P3').pf === 7 && row('P3').pa === 7,
+      'wo rr: P3 — winner-only win counted, no points from it');
+    ok(row('P2').played === 2 && row('P2').l === 1 && row('P2').d === 1 && row('P2').pf === 12 && row('P2').pa === 17,
+      'wo rr: P2 — loss + draw, points from scored matches only');
+    ok(st[0].id === 'P1' && st[1].id === 'P3' && st[3].id === 'P2',
+      'wo rr: order is wins, then point difference (P1 +5 over P3 0; winless P4 at 0 over P2 at −5)');
+    ok(row('P4').played === 0, 'wo rr: unplayed entry untouched');
+    // Scoring over a winner-only match converts it (draw re-allowed).
+    E.scoreRRMatch(game, DEF, woMatch.id, 4, 4);
+    ok(woMatch.winnerOnly === false && woMatch.winnerId === null, 'wo rr: scoring a winner-only match converts it, draw has no winner');
+    const st2 = E.computeStandings(es, game.matches, DEF);
+    ok(st2.find((r) => r.id === 'P1').d === 1 && st2.find((r) => r.id === 'P3').w === 0,
+      'wo rr: after conversion the win becomes a draw in the standings');
+  }
+
+  // Results-based pairing after a winner-only round.
+  {
+    const es = entries(6);
+    const game = E.createResultsBasedRR(es, 2);
+    const r1 = game.matches.slice();
+    // Round 1: P1vP2, P3vP4, P5vP6 — winners P1, P3, P5, all winner-only.
+    E.pickRRWinner(game, r1[0].id, 'P1');
+    E.pickRRWinner(game, r1[1].id, 'P3');
+    E.pickRRWinner(game, r1[2].id, 'P5');
+    ok(E.rrAllRoundsScored(game), 'wo swiss: winner-only matches count as scored for the round gate');
+    const rn = E.generateNextRRRound(game, DEF);
+    ok(rn === 2, 'wo swiss: round 2 generates after a winner-only round 1');
+    const r2 = game.matches.filter((m) => m.round === 2);
+    ok(r2.length === 3, 'wo swiss: round 2 has 3 matches');
+    const r1Keys = new Set(r1.map((m) => E.pairKey(m.aId, m.bId)));
+    ok(r2.every((m) => !r1Keys.has(E.pairKey(m.aId, m.bId))), 'wo swiss: round 2 has no rematches');
+    const pairStr = r2.map((m) => [m.aId, m.bId].sort().join('v')).sort();
+    ok(pairStr.includes('P1vP3'), `wo swiss: winners paired from the standings (P1vP3), got ${pairStr.join(', ')}`);
+    // Winner-only matches count toward games played / completion.
+    r2.forEach((m) => E.pickRRWinner(game, m.id, m.aId));
+    ok(E.rrComplete(game), 'wo swiss: RR completes on winner-only results');
+    const played = E.rrGamesPlayed(game);
+    ok(es.every((e) => played[e.id] === 2), 'wo swiss: every entry has exactly 2 games');
+  }
+
+  // Schedule rebuild inputs: a winner-only match is PLAYED — the
+  // standings-driven needs math (what regeneratePresetRR consumes)
+  // counts it, so it is kept and never rebuilt.
+  {
+    const es = entries(4);
+    const built = E.buildPresetRR(es.map((e) => e.id), 3);
+    const game = { entries: es, matches: built.matches, rrByes: [] };
+    const m0 = game.matches[0], m1 = game.matches[1];
+    E.pickRRWinner(game, m0.id, m0.aId);
+    E.scoreRRMatch(game, DEF, m1.id, 6, 2);
+    const st = E.computeStandings(es, game.matches, DEF);
+    const playedById = {};
+    st.forEach((r) => { playedById[r.id] = r.played; });
+    ok(playedById[m0.aId] === 1 && playedById[m0.bId] === 1,
+      'wo rebuild: winner-only participants each have 1 played game in the standings');
+    const needs = {};
+    es.forEach((e) => { needs[e.id] = Math.max(0, 3 - (playedById[e.id] || 0)); });
+    const forbidden = {};
+    [m0, m1].forEach((m) => { forbidden[E.pairKey(m.aId, m.bId)] = true; });
+    const out = E.buildRemainingRR(es.map((e) => e.id), needs, forbidden, playedById, 11);
+    const sched = {};
+    out.rounds.forEach((r) => r.pairs.forEach((pr) => { sched[pr[0]] = (sched[pr[0]] || 0) + 1; sched[pr[1]] = (sched[pr[1]] || 0) + 1; }));
+    ok(es.every((e) => (sched[e.id] || 0) <= needs[e.id] + (out.extras[e.id] || 0)),
+      'wo rebuild: nobody is scheduled past their remaining need');
+    ok(es.every((e) => (playedById[e.id] || 0) + (sched[e.id] || 0) + (out.unmet[e.id] || 0) >= 3 - 1),
+      'wo rebuild: played (incl. winner-only) + scheduled + unmet accounts for the target');
+  }
+}
+
 console.log(`\n${checks} checks, ${failures} failures`);
 process.exit(failures ? 1 : 0);
