@@ -40,31 +40,43 @@ create policy "templates owner delete" on public.templates
 
 -- ---------------------------------------------------------------------
 -- Feedback (from the app's ☰ menu / home-page "Send feedback" button).
--- Anyone using the app — signed in or not — can SEND feedback
--- (insert-only for anon/authenticated). READING it back through the
--- API is granted to exactly one account — the app owner's — by the
--- "owner reads feedback" select policy below, which keys on the
--- signed-in user's JWT email; every other signed-in account simply
--- gets zero rows. The account screen's "Feedback received" inbox
--- (v2.4.5) is built on that policy. There is still deliberately no
--- update/delete policy. Feedback can also be read in the Supabase
--- dashboard (Table editor → feedback).
+-- Since v2.4.6, SENDING feedback requires sign-in (the app gates the
+-- form), so every submission carries the sender's account email in
+-- the `email` column — stamped by the app from its session; the
+-- insert itself still goes through the insert-only policy below.
+-- READING it back through the API is granted to exactly one
+-- account — the app owner's — by the "owner reads feedback" select
+-- policy below, which keys on the signed-in user's JWT email; every
+-- other signed-in account simply gets zero rows. The account
+-- screen's "Feedback received" inbox (v2.4.5) is built on that
+-- policy, and since v2.4.6 the owner can also mark rows read/unread
+-- (the `read_at` column) via the "owner updates feedback" policy —
+-- still deliberately no delete policy. Feedback can also be read in
+-- the Supabase dashboard (Table editor → feedback).
 -- ---------------------------------------------------------------------
 create table if not exists public.feedback (
   id          uuid primary key default gen_random_uuid(),
   name        text,                    -- optional, may be null
+  email       text,                    -- sender's account email (v2.4.6; null on older rows)
   message     text not null,
+  read_at     timestamptz,             -- null = unread; set when the owner marks it read (v2.4.6)
   created_at  timestamptz not null default now()
 );
+
+-- Databases created before v2.4.6 get the new columns here:
+alter table public.feedback add column if not exists email text;
+alter table public.feedback add column if not exists read_at timestamptz;
 
 alter table public.feedback enable row level security;
 
 drop policy if exists "feedback insert only" on public.feedback;
 drop policy if exists "owner reads feedback" on public.feedback;
+drop policy if exists "owner updates feedback" on public.feedback;
 
 create policy "feedback insert only" on public.feedback
   for insert to anon, authenticated with check (true);
 create policy "owner reads feedback" on public.feedback for select to authenticated using (auth.jwt() ->> 'email' = 'jefffeldmanphoto@gmail.com');
+create policy "owner updates feedback" on public.feedback for update to authenticated using (auth.jwt() ->> 'email' = 'jefffeldmanphoto@gmail.com') with check (auth.jwt() ->> 'email' = 'jefffeldmanphoto@gmail.com');
 
 -- ---------------------------------------------------------------------
 -- Live player view (v2.3) — the ONE exception to the on-device rule,
