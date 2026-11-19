@@ -158,7 +158,8 @@ dead end; the play and round-summary screens offer Home only (their
 games stay in progress), and the finish screen keeps its own
 *Play again* / *Home* buttons.
 
-**☰ Menu (top right):** *Home* · *Install this app* (PWA install prompt, or
+**☰ Menu (top right):** *Home* · *Account* (the optional staff
+account — it lived in the topbar until v2.4.4) · *Install this app* (PWA install prompt, or
 Add-to-Home-Screen instructions) · *Share / QR code* (a QR code for
 this site's URL, generated on-device by `qr.js` — nothing is fetched —
 plus Share / Copy link) · *Join the WhatsApp group* (only shown when
@@ -337,5 +338,5 @@ Accounts are optional and the app works without them. To switch them on:
 5. Optional: under **Authentication → Providers → Email**, decide
    whether new accounts must confirm their email before signing in.
 
-After that, the **Account** button in the app offers sign-in/sign-up,
+After that, the **Account** item in the app's ☰ menu offers sign-in/sign-up,
 and a signed-in staffer's custom templates sync across their devices.
